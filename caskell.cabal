@@ -1,0 +1,29 @@
+cabal-version: >= 1.10
+
+name:                caskell
+version:             0.1.0.0
+
+author:              102451
+maintainer:          102451@fhwn.ac.at
+build-type:          Simple
+
+executable caskell
+  main-is:             Caskell/Main.hs
+  build-depends:
+    base >=4.13 && <4.14,
+    optparse-applicative,
+    ghc,
+    ghc-paths,
+    bytestring,
+    cryptonite,
+    binary,
+    memory,
+    containers
+
+  other-modules:
+    Caskell.Compile
+    Caskell.Bytes
+    Caskell.Hash
+    Caskell.CoreHash
+
+  default-language:    Haskell2010
