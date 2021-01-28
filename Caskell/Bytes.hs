@@ -19,6 +19,8 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import Data.Binary
+import Data.Ratio
+import FastString
 
 class BinarySerializable a where
     toBytes :: a -> [BS.ByteString]
@@ -70,8 +72,14 @@ instance BinarySerializable Float where
 instance BinarySerializable Double where
     toBytes = toBytes . encode
 
+instance BinarySerializable a => BinarySerializable (Ratio a) where
+    toBytes x = toBytes (numerator x, denominator x)
+
 instance BinarySerializable Bool where
     toBytes = toBytes . encode
 
 instance BinarySerializable () where
     toBytes _ = []
+
+instance BinarySerializable FastString where
+    toBytes = toBytes . FastString.unpackFS

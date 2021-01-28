@@ -24,7 +24,10 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Crypto.Hash as CH
 
 import Data.Binary
+import Data.Maybe
+import Data.Ratio
 import Data.Word
+import FastString
 
 import Caskell.Bytes
 
@@ -101,7 +104,7 @@ instance Hashable BSL.ByteString where
     typeID = const 0x0000000B
     uniqueBytes = primitiveBytes
 
-instance (Hashable a, BinarySerializable a) => Hashable [a] where
+instance (Hashable a) => Hashable [a] where
     typeID = const 0x0000000C
     uniqueBytes x = bytes where
         tb = typeID' x
@@ -109,7 +112,7 @@ instance (Hashable a, BinarySerializable a) => Hashable [a] where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 
-instance (Hashable a, Hashable b, BinarySerializable a, BinarySerializable b)
+instance (Hashable a, Hashable b)
   => Hashable (a, b) where
     typeID = const 0x0000000D
     uniqueBytes (x, y) = bytes where
@@ -120,3 +123,30 @@ instance (Hashable a, Hashable b, BinarySerializable a, BinarySerializable b)
         len2 = sum $ map (BS.length) bts2
         lb = toBytes (len1 + len2)
         bytes = tb ++ lb ++ bts1 ++ bts2
+
+-- the rest
+instance Hashable a => Hashable (Ratio a) where
+    typeID = const 0x0000000E
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts1 = uniqueBytes $ numerator x
+        bts2 = uniqueBytes $ denominator x
+        len1 = sum $ map (BS.length) bts1
+        len2 = sum $ map (BS.length) bts2
+        lb = toBytes (len1 + len2)
+        bytes = tb ++ lb ++ bts1 ++ bts2
+
+instance Hashable FastString where
+    typeID = const 0x0000000F
+    uniqueBytes = primitiveBytes
+
+instance Hashable a => Hashable (Maybe a) where
+    typeID (Just _) = 0x00000010
+    typeID Nothing  = 0x00000011
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          Just y -> uniqueBytes y
+          Nothing -> []
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
