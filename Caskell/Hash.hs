@@ -23,6 +23,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Crypto.Hash as CH
 
+import Data.Array
 import Data.Binary
 import Data.Maybe
 import Data.Ratio
@@ -148,5 +149,13 @@ instance Hashable a => Hashable (Maybe a) where
         bts = case x of
           Just y -> uniqueBytes y
           Nothing -> []
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance (Ix i, Hashable i, Hashable v) => Hashable (Array i v) where
+    typeID = const 0x00000012
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = concatMap (\(i,v) -> uniqueBytes i ++ uniqueBytes v) $ assocs x
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts

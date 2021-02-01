@@ -13,13 +13,16 @@ import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified GHC as GHC
+import qualified Name
 import qualified CoreSyn as Core
 import qualified Literal as Literal
-import TyCoRep
 import qualified Var as Var
-import DynFlags
 import BasicTypes
 import Outputable (Outputable, showPpr)
+
+import DynFlags
+import TyCoRep
+import CoAxiom
 
 import Data.Functor
 import Data.Coerce
@@ -148,14 +151,121 @@ instance Hashable TyLit where
 
 instance Hashable Coercion where
     typeID x = case x of
-      TyCoRep.Refl _ -> 0x00006000
-      -- TODO: complete
+      TyCoRep.Refl _            -> 0x00006000
+      TyCoRep.GRefl _ _ _       -> 0x00006001
+      TyCoRep.TyConAppCo _ _ _  -> 0x00006002
+      TyCoRep.AppCo _ _         -> 0x00006003
+      TyCoRep.ForAllCo _ _ _    -> 0x00006004
+      TyCoRep.FunCo _ _ _       -> 0x00006005
+      TyCoRep.CoVarCo _         -> 0x00006006
+      TyCoRep.CoVarCo _         -> 0x00006007
+      TyCoRep.AxiomInstCo _ _ _ -> 0x00006008
+      TyCoRep.AxiomRuleCo _ _   -> 0x00006009
+      TyCoRep.UnivCo _ _ _ _    -> 0x0000600A
+      TyCoRep.SymCo _           -> 0x0000600B
+      TyCoRep.TransCo _ _       -> 0x0000600C
+      TyCoRep.NthCo _ _ _       -> 0x0000600D
+      TyCoRep.LRCo _ _          -> 0x0000600E
+      TyCoRep.InstCo _ _        -> 0x0000600F
+      TyCoRep.KindCo _          -> 0x00006010
+      TyCoRep.SubCo _           -> 0x00006011
+      TyCoRep.HoleCo _          -> 0x00006012
 
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
           TyCoRep.Refl t -> uniqueBytes t
-            -- TODO: complete
+          TyCoRep.GRefl role t c -> toBytes role ++ uniqueBytes t ++ uniqueBytes c
+          TyCoRep.TyConAppCo role tcon l -> toBytes role ++ uniqueBytes tcon ++ uniqueBytes l
+          TyCoRep.AppCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
+          TyCoRep.ForAllCo vtycovar kc c -> uniqueBytes vtycovar ++ uniqueBytes kc ++ uniqueBytes c
+          TyCoRep.FunCo role c1 c2 -> toBytes role ++ uniqueBytes c1 ++ uniqueBytes c2
+          TyCoRep.CoVarCo cv -> uniqueBytes cv
+          TyCoRep.AxiomInstCo coax index l -> uniqueBytes coax ++ uniqueBytes index ++ uniqueBytes l
+          -- TODO: the rest
+          TyCoRep.AxiomRuleCo _ _ -> []
+          TyCoRep.UnivCo _ _ _ _ -> []
+          TyCoRep.SymCo c -> uniqueBytes c
+          TyCoRep.TransCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
+          TyCoRep.NthCo role i c -> toBytes role ++ uniqueBytes i ++ uniqueBytes c
+          TyCoRep.LRCo lr c -> toBytes lr ++ uniqueBytes c
+          TyCoRep.InstCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
+          TyCoRep.KindCo c -> uniqueBytes c
+          TyCoRep.SubCo c -> uniqueBytes c
+          TyCoRep.HoleCo _ -> [] -- TODO: not ignore?
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance BinarySerializable BasicTypes.LeftOrRight where
+    toBytes x = toBytes y where
+        y = case x of
+          BasicTypes.CLeft  -> 0x00 :: Word8
+          BasicTypes.CRight -> 0x01 :: Word8
+
+instance BinarySerializable CoAxiom.Role where
+    toBytes x = toBytes y where
+        y = case x of
+          CoAxiom.Nominal          -> 0x00 :: Word8
+          CoAxiom.Representational -> 0x01 :: Word8
+          CoAxiom.Phantom          -> 0x02 :: Word8
+
+instance Hashable MCoercion where
+    typeID x = case x of
+      TyCoRep.MRefl -> 0x00007000
+      TyCoRep.MCo _ -> 0x00007001
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          TyCoRep.MRefl -> []
+          TyCoRep.MCo c -> uniqueBytes c
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable (CoAxiom.CoAxiom br) where
+    typeID = const 0x00008000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = uniqueBytes (Unique.getKey $ co_ax_unique x)
+           ++ uniqueBytes (co_ax_name x)
+           ++ toBytes     (co_ax_role x)
+           ++ uniqueBytes (co_ax_tc x)
+           ++ uniqueBytes (co_ax_branches x)
+           ++ uniqueBytes (co_ax_implicit x)
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable Name.Name where
+    typeID = const 0x00009000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = uniqueBytes (Unique.getKey $ Name.nameUnique x)
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable (Branches br) where
+    typeID = const 0x0000A000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = uniqueBytes $ unMkBranches x
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable CoAxBranch where
+    typeID = const 0x0000B000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        -- SrcLoc is ignored
+        bts = uniqueBytes (cab_tvs x)
+           ++ uniqueBytes (cab_eta_tvs x)
+           ++ uniqueBytes (cab_cvs x)
+           ++ concatMap (toBytes) (cab_roles x)
+           ++ uniqueBytes (cab_lhs x)
+           ++ uniqueBytes (cab_rhs x)
+           ++ uniqueBytes (cab_incomps x)
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 

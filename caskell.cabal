@@ -18,6 +18,7 @@ executable caskell
     cryptonite,
     binary,
     memory,
+    array,
     containers
 
   other-modules:
