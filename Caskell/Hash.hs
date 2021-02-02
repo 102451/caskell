@@ -28,7 +28,9 @@ import Data.Binary
 import Data.Maybe
 import Data.Ratio
 import Data.Word
+import Pair
 import FastString
+import Unique
 
 import Caskell.Bytes
 
@@ -159,3 +161,23 @@ instance (Ix i, Hashable i, Hashable v) => Hashable (Array i v) where
         bts = concatMap (\(i,v) -> uniqueBytes i ++ uniqueBytes v) $ assocs x
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
+
+instance (Hashable a) => Hashable (Pair a) where
+    typeID = const 0x00000013
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = uniqueBytes (pFst x) ++ uniqueBytes (pSnd x)
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+{-|
+-- UNIQUES ARE NOT STABLE ACROSS REBUILDS
+-- https://hackage.haskell.org/package/ghc-8.6.4/docs/src/Unique.html#nonDetCmpUnique
+instance Hashable Unique where
+    typeID = const 0x00000014
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = uniqueBytes $ Unique.getKey x
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+|-}
