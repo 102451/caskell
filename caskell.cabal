@@ -26,5 +26,6 @@ executable caskell
     Caskell.Bytes
     Caskell.Hash
     Caskell.CoreHash
+    Caskell.PrimOpHash
 
   default-language:    Haskell2010

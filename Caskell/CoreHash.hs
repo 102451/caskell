@@ -1,7 +1,7 @@
 {-|
     this module uses the Hash module to hash a GHC Core Module
 
-    https://downloads.haskell.org/~ghc/8.8.1/docs/html/libraries/ghc-8.8.1/CoreSyn.html#t:Expr
+    https://downloads.haskell.org/~ghc/8.8.4/docs/html/libraries/ghc-8.8.4/CoreSyn.html#t:Expr
 |-}
 
 module Caskell.CoreHash
@@ -12,13 +12,17 @@ module Caskell.CoreHash
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import qualified GHC as GHC
+import qualified GHC
 import qualified Name
 import qualified CoreSyn as Core
-import qualified Literal as Literal
-import qualified Var as Var
-import qualified IdInfo as IdInfo
-import qualified PatSyn as PatSyn
+import qualified Literal
+import qualified Var
+import qualified IdInfo
+import qualified PatSyn
+import qualified TcType
+import qualified PrimOp
+import qualified DataCon
+import qualified Class
 import BasicTypes
 import Outputable (Outputable, showPpr)
 
@@ -36,6 +40,7 @@ import Unique
 
 import Caskell.Bytes
 import Caskell.Hash
+import Caskell.PrimOpHash
 
 
 typeID' :: Hashable a => a -> [BS.ByteString]
@@ -132,7 +137,8 @@ instance Hashable Var.Var where
           | Var.isTyVar x   = []
           | Var.isTcTyVar x = uniqueBytes (Var.tcTyVarDetails x)
           | Var.isId x = uniqueBytes (Var.idDetails x)
-                      ++ uniqueBytes (Var.idInfo x)
+                      -- https://downloads.haskell.org/~ghc/8.8.4/docs/html/libraries/ghc-8.8.4/src/IdInfo.html#IdInfo
+                      -- ++ uniqueBytes (Var.idInfo x) -- IdInfo may not be always present and is purely optional
         bts = uniqueBytes (Var.varType x) ++ bts' -- name and unique are useless
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
@@ -252,9 +258,11 @@ instance Hashable (CoAxiom.CoAxiom br) where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 
-{-|
+-- IGNORE NAMES
 instance Hashable Name.Name where
     typeID = const 0x00009000
+    uniqueBytes _ = []
+{-|
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = uniqueBytes (Name.nameUnique x)
@@ -374,13 +382,83 @@ instance Hashable PatSyn.PatSyn where
         bytes = tb ++ lb ++ bts
 
 
--- TODO: TcType.TcTyVarDetails
--- TODO: IdInfo.IdInfo
--- TODO: GHC.DataCon
--- TODO: GHC.Class
--- TODO: PrimOp.PrimOp
+instance Hashable TcType.TcTyVarDetails where
+    typeID x = case x of
+      TcType.SkolemTv _ _   -> 0x00011000
+      TcType.RuntimeUnk     -> 0x00011001
+      TcType.MetaTv{}       -> 0x00011002
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          TcType.SkolemTv lv b -> toBytes lv ++ toBytes b
+          TcType.RuntimeUnk -> []
+          TcType.MetaTv{ TcType.mtv_info = info, TcType.mtv_tclvl = tclvl } ->
+              toBytes info ++ toBytes tclvl
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance BinarySerializable TcType.TcLevel where
+    toBytes (TcType.TcLevel x) = toBytes x
+
+instance BinarySerializable TcType.MetaInfo where
+    toBytes x = toBytes b where
+        b = case x of
+          TcType.TauTv      -> 0x00 :: Word8
+          TcType.TyVarTv    -> 0x01 :: Word8
+          TcType.FlatMetaTv -> 0x02 :: Word8
+          TcType.FlatSkolTv -> 0x03 :: Word8
+
+-- DataCon.DataCon
+-- Data Constructor
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/DataCon.html#g:1
+instance Hashable DataCon.DataCon where
+    typeID = const 0x00012000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        (tycovs, thet, argument_types, result_type) = DataCon.dataConSig x
+        bts = uniqueBytes tycovs -- TODO: check if necessary
+           ++ uniqueBytes thet -- TODO: check if necessary
+           ++ uniqueBytes argument_types
+           ++ uniqueBytes result_type
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+-- Class.Class
+-- TypeClass
+instance Hashable Class.Class where
+    typeID = const 0x00013000
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        (_, sc_theta, sc_sels, op_stuff) = Class.classBigSig x
+        bts = uniqueBytes (Class.classTyCon x)
+           ++ uniqueBytes sc_theta
+           ++ uniqueBytes sc_sels
+           ++ uniqueBytes op_stuff -- TODO: test this stuff
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable ty => Hashable (DefMethSpec ty) where
+    typeID x = case x of
+      VanillaDM   -> 0x00014000
+      GenericDM _ -> 0x00014001
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          VanillaDM    -> []
+          GenericDM ty -> uniqueBytes ty
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+
 
 -- TODO: TyCon
+-- TODO: PRIMOP FIRST
 {-|
 instance Hashable TyCon.TyCon where
     typeID x = case x of
