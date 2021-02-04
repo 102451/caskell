@@ -4,10 +4,12 @@ module Caskell.PrimOpHash
     uniqueBytes
 ) where
 
+import Data.Word
 import qualified Data.ByteString as BS
 import Caskell.Bytes
 import Caskell.Hash
 import qualified PrimOp
+import qualified CmmType
 
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
@@ -592,30 +594,48 @@ instance Hashable PrimOp.PrimOp where
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
-            -- TODO: implement
-          PrimOp.VecBroadcastOp _ _ _ -> []
-          PrimOp.VecPackOp _ _ _ -> []
-          PrimOp.VecUnpackOp _ _ _ -> []
-          PrimOp.VecInsertOp _ _ _ -> []
-          PrimOp.VecAddOp _ _ _ -> []
-          PrimOp.VecSubOp _ _ _ -> []
-          PrimOp.VecMulOp _ _ _ -> []
-          PrimOp.VecDivOp _ _ _ -> []
-          PrimOp.VecQuotOp _ _ _ -> []
-          PrimOp.VecRemOp _ _ _ -> []
-          PrimOp.VecNegOp _ _ _ -> []
-          PrimOp.VecIndexByteArrayOp _ _ _ -> []
-          PrimOp.VecReadByteArrayOp _ _ _ -> []
-          PrimOp.VecWriteByteArrayOp _ _ _ -> []
-          PrimOp.VecIndexOffAddrOp _ _ _ -> []
-          PrimOp.VecReadOffAddrOp _ _ _ -> []
-          PrimOp.VecWriteOffAddrOp _ _ _ -> []
-          PrimOp.VecIndexScalarByteArrayOp _ _ _ -> []
-          PrimOp.VecReadScalarByteArrayOp _ _ _ -> []
-          PrimOp.VecWriteScalarByteArrayOp _ _ _ -> []
-          PrimOp.VecIndexScalarOffAddrOp _ _ _ -> []
-          PrimOp.VecReadScalarOffAddrOp _ _ _ -> []
-          PrimOp.VecWriteScalarOffAddrOp _ _ _ -> []
+          PrimOp.VecBroadcastOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecPackOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecUnpackOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecInsertOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecAddOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecSubOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecMulOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecDivOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecQuotOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecRemOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecNegOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecIndexByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecReadByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecWriteByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecIndexOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecReadOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecWriteOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecIndexScalarByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecReadScalarByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecWriteScalarByteArrayOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecIndexScalarOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecReadScalarOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
+          PrimOp.VecWriteScalarOffAddrOp cat l w -> toBytes cat ++ toBytes l ++ toBytes w
           _ -> []
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
+
+instance BinarySerializable PrimOp.PrimOpVecCat where
+    toBytes x = toBytes b where
+        b = case x of
+          PrimOp.IntVec   -> 0x00 :: Word8
+          PrimOp.WordVec  -> 0x01
+          PrimOp.FloatVec -> 0x02
+
+instance BinarySerializable CmmType.Width where
+    toBytes x = toBytes b where
+        b = case x of
+          CmmType.W8 -> 0x08 :: Word16
+          CmmType.W16 -> 0x10
+          CmmType.W32 -> 0x20
+          CmmType.W64 -> 0x40
+          CmmType.W80 -> 0x50
+          CmmType.W128 -> 0x80
+          CmmType.W256 -> 0x100
+          CmmType.W512 -> 0x200

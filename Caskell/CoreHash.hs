@@ -46,7 +46,7 @@ import Caskell.PrimOpHash
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
-instance Hashable (Core.Expr b) where
+instance Hashable b => Hashable (Core.Expr b) where
     typeID (Core.Var _)          = 0x00001000
     typeID (Core.Lit _)          = 0x00001001
     typeID (Core.App _ _)        = 0x00001002
@@ -60,7 +60,17 @@ instance Hashable (Core.Expr b) where
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
+          Core.Var var -> uniqueBytes var
           Core.Lit lit -> uniqueBytes lit
+          Core.App e1 e2 -> uniqueBytes e1 ++ uniqueBytes e2
+          Core.Lam b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Let b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
+          Core.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
+          Core.Tick tick e -> -- uniqueBytes tick ++ -- tickish is not useful
+              uniqueBytes e
+          Core.Type t -> uniqueBytes t
+          Core.Coercion coer -> uniqueBytes coer
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 
@@ -455,10 +465,36 @@ instance Hashable ty => Hashable (DefMethSpec ty) where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 
+instance Hashable a => Hashable (Core.Bind a) where
+    typeID (Core.NonRec _ _) = 0x00015000
+    typeID (Core.Rec _)      = 0x00015001
 
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          Core.NonRec b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Rec l -> uniqueBytes l
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
+
+instance Hashable Core.AltCon where
+    typeID x = case x of
+      Core.DataAlt _ -> 0x00016000
+      Core.LitAlt _  -> 0x00016001
+      Core.DEFAULT   -> 0x00016002
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          Core.DataAlt dc -> uniqueBytes dc
+          Core.LitAlt l  -> uniqueBytes l
+          Core.DEFAULT   -> []
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ lb ++ bts
 
 -- TODO: TyCon
--- TODO: PRIMOP FIRST
 {-|
 instance Hashable TyCon.TyCon where
     typeID x = case x of

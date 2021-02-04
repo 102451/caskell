@@ -115,18 +115,6 @@ instance (Hashable a) => Hashable [a] where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 
-instance (Hashable a, Hashable b)
-  => Hashable (a, b) where
-    typeID = const 0x0000000D
-    uniqueBytes (x, y) = bytes where
-        tb = typeID' (x, y)
-        bts1 = uniqueBytes x
-        bts2 = uniqueBytes y
-        len1 = sum $ map (BS.length) bts1
-        len2 = sum $ map (BS.length) bts2
-        lb = toBytes (len1 + len2)
-        bytes = tb ++ lb ++ bts1 ++ bts2
-
 -- the rest
 instance Hashable a => Hashable (Ratio a) where
     typeID = const 0x0000000E
@@ -181,3 +169,46 @@ instance Hashable Unique where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ lb ++ bts
 |-}
+
+
+instance (Hashable a, Hashable b)
+  => Hashable (a, b) where
+    typeID = const 0x00000100
+    uniqueBytes (x, y) = bytes where
+        tb = typeID' (x, y)
+        bts1 = uniqueBytes x
+        bts2 = uniqueBytes y
+        len1 = sum $ map (BS.length) bts1
+        len2 = sum $ map (BS.length) bts2
+        lb = toBytes (len1 + len2)
+        bytes = tb ++ lb ++ bts1 ++ bts2
+
+instance (Hashable a, Hashable b, Hashable c)
+  => Hashable (a, b, c) where
+    typeID = const 0x00000101
+    uniqueBytes (x, y, z) = bytes where
+        tb = typeID' (x, y, z)
+        bts1 = uniqueBytes x
+        bts2 = uniqueBytes y
+        bts3 = uniqueBytes z
+        len1 = sum $ map (BS.length) bts1
+        len2 = sum $ map (BS.length) bts2
+        len3 = sum $ map (BS.length) bts3
+        lb = toBytes (len1 + len2 + len3)
+        bytes = tb ++ lb ++ bts1 ++ bts2 ++ bts3
+
+instance (Hashable a, Hashable b, Hashable c, Hashable d)
+  => Hashable (a, b, c, d) where
+    typeID = const 0x00000102
+    uniqueBytes (x, y, z, u) = bytes where
+        tb = typeID' (x, y, z, u)
+        bts1 = uniqueBytes x
+        bts2 = uniqueBytes y
+        bts3 = uniqueBytes z
+        bts4 = uniqueBytes u
+        len1 = sum $ map (BS.length) bts1
+        len2 = sum $ map (BS.length) bts2
+        len3 = sum $ map (BS.length) bts3
+        len4 = sum $ map (BS.length) bts4
+        lb = toBytes (len1 + len2 + len3 + len4)
+        bytes = tb ++ lb ++ bts1 ++ bts2 ++ bts3 ++ bts4
