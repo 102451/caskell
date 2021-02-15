@@ -8,7 +8,9 @@
 module Caskell.Bytes
 (
     BinarySerializable,
-    toBytes
+    Bytes,
+    toBytes,
+    bytesLength
 ) where
 
 import qualified Data.ByteArray as BA
@@ -22,8 +24,13 @@ import Data.Binary
 import Data.Ratio
 import FastString
 
+type Bytes = [BS.ByteString]
+
 class BinarySerializable a where
-    toBytes :: a -> [BS.ByteString]
+    toBytes :: a -> Bytes
+
+bytesLength :: (Num b) => Bytes -> b
+bytesLength = fromIntegral . sum . map (BS.length)
 
 -- basics
 instance BinarySerializable BS.ByteString where

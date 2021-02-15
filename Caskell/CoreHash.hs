@@ -1,7 +1,7 @@
 {-|
     this module uses the Hash module to hash a GHC Core Module
 
-    https://downloads.haskell.org/~ghc/8.8.4/docs/html/libraries/ghc-8.8.4/CoreSyn.html#t:Expr
+    https://downloads.haskell.org/~ghc/8.8.3/docs/html/libraries/ghc-8.8.3/CoreSyn.html#t:Expr
 |-}
 
 module Caskell.CoreHash
@@ -72,7 +72,7 @@ instance Hashable b => Hashable (Core.Expr b) where
           Core.Type t -> uniqueBytes t
           Core.Coercion coer -> uniqueBytes coer
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance BinarySerializable Literal.LitNumType where
     toBytes Literal.LitNumInteger = toBytes (0x00 :: Word8)
@@ -108,7 +108,7 @@ instance Hashable Literal.Literal where
           Literal.LitDouble ratio -> uniqueBytes ratio
           Literal.LitLabel s m fod -> uniqueBytes s ++ uniqueBytes m ++ toBytes fod
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable Type where
     typeID (TyVarTy _)    = 0x00003000
@@ -132,7 +132,7 @@ instance Hashable Type where
           CastTy t kcoer -> uniqueBytes t ++ uniqueBytes kcoer
           CoercionTy coer -> uniqueBytes coer
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable Var.Var where
     typeID x
@@ -151,7 +151,7 @@ instance Hashable Var.Var where
                       -- ++ uniqueBytes (Var.idInfo x) -- IdInfo may not be always present and is purely optional
         bts = uniqueBytes (Var.varType x) ++ bts' -- name and unique are useless
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable ArgFlag where
     typeID Inferred  = 0x00004100
@@ -165,7 +165,7 @@ instance (Hashable a, Hashable b) => Hashable (Var.VarBndr a b) where
         tb = typeID' (Var.Bndr x y)
         bts = uniqueBytes (x, y)
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable TyLit where
     typeID (NumTyLit _) = 0x00005000
@@ -176,7 +176,7 @@ instance Hashable TyLit where
           NumTyLit i -> uniqueBytes i
           StrTyLit s -> uniqueBytes s
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable Coercion where
     typeID x = case x of
@@ -187,18 +187,17 @@ instance Hashable Coercion where
       TyCoRep.ForAllCo _ _ _    -> 0x00006004
       TyCoRep.FunCo _ _ _       -> 0x00006005
       TyCoRep.CoVarCo _         -> 0x00006006
-      TyCoRep.CoVarCo _         -> 0x00006007
-      TyCoRep.AxiomInstCo _ _ _ -> 0x00006008
-      TyCoRep.AxiomRuleCo _ _   -> 0x00006009
-      TyCoRep.UnivCo _ _ _ _    -> 0x0000600A
-      TyCoRep.SymCo _           -> 0x0000600B
-      TyCoRep.TransCo _ _       -> 0x0000600C
-      TyCoRep.NthCo _ _ _       -> 0x0000600D
-      TyCoRep.LRCo _ _          -> 0x0000600E
-      TyCoRep.InstCo _ _        -> 0x0000600F
-      TyCoRep.KindCo _          -> 0x00006010
-      TyCoRep.SubCo _           -> 0x00006011
-      TyCoRep.HoleCo _          -> 0x00006012
+      TyCoRep.AxiomInstCo _ _ _ -> 0x00006007
+      TyCoRep.AxiomRuleCo _ _   -> 0x00006008
+      TyCoRep.UnivCo _ _ _ _    -> 0x00006009
+      TyCoRep.SymCo _           -> 0x0000600A
+      TyCoRep.TransCo _ _       -> 0x0000600B
+      TyCoRep.NthCo _ _ _       -> 0x0000600C
+      TyCoRep.LRCo _ _          -> 0x0000600D
+      TyCoRep.InstCo _ _        -> 0x0000600E
+      TyCoRep.KindCo _          -> 0x0000600F
+      TyCoRep.SubCo _           -> 0x00006010
+      TyCoRep.HoleCo _          -> 0x00006011
 
     uniqueBytes x = bytes where
         tb = typeID' x
@@ -223,7 +222,7 @@ instance Hashable Coercion where
           TyCoRep.HoleCo _ -> [] -- ignore
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance BinarySerializable BasicTypes.LeftOrRight where
     toBytes x = toBytes y where
@@ -250,7 +249,7 @@ instance Hashable MCoercion where
           TyCoRep.MCo c -> uniqueBytes c
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable (CoAxiom.CoAxiom br) where
     typeID = const 0x00008000
@@ -266,7 +265,7 @@ instance Hashable (CoAxiom.CoAxiom br) where
            -- ++ uniqueBytes (co_ax_name x)
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 -- IGNORE NAMES
 instance Hashable Name.Name where
@@ -277,7 +276,7 @@ instance Hashable Name.Name where
         tb = typeID' x
         bts = uniqueBytes (Name.nameUnique x)
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 |-}
 
 instance Hashable (Branches br) where
@@ -286,7 +285,7 @@ instance Hashable (Branches br) where
         tb = typeID' x
         bts = uniqueBytes $ unMkBranches x
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable CoAxBranch where
     typeID = const 0x0000B000
@@ -301,7 +300,7 @@ instance Hashable CoAxBranch where
            ++ uniqueBytes (cab_rhs x)
            ++ uniqueBytes (cab_incomps x)
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable CoAxiomRule where
     typeID = const 0x0000C000
@@ -312,7 +311,7 @@ instance Hashable CoAxiomRule where
            ++ toBytes (coaxrRole x)
            -- ++ uniqueBytes (coaxrProves x)
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable TyCoRep.UnivCoProvenance where
     typeID x = case x of
@@ -329,7 +328,7 @@ instance Hashable TyCoRep.UnivCoProvenance where
           TyCoRep.ProofIrrelProv kc -> uniqueBytes kc
           TyCoRep.PluginProv s      -> uniqueBytes s
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
     
 instance Hashable IdInfo.IdDetails where
     typeID x = case x of
@@ -360,7 +359,7 @@ instance Hashable IdInfo.IdDetails where
           IdInfo.CoVarId          -> []
           IdInfo.JoinId ar        -> toBytes ar
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable IdInfo.RecSelParent where
     typeID x = case x of
@@ -374,7 +373,7 @@ instance Hashable IdInfo.RecSelParent where
           IdInfo.RecSelPatSyn pat -> uniqueBytes pat
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable PatSyn.PatSyn where
     typeID = const 0x00010000
@@ -389,7 +388,7 @@ instance Hashable PatSyn.PatSyn where
            ++ uniqueBytes res_ty
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 
 instance Hashable TcType.TcTyVarDetails where
@@ -407,7 +406,7 @@ instance Hashable TcType.TcTyVarDetails where
               toBytes info ++ toBytes tclvl
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance BinarySerializable TcType.TcLevel where
     toBytes (TcType.TcLevel x) = toBytes x
@@ -434,7 +433,7 @@ instance Hashable DataCon.DataCon where
            ++ uniqueBytes result_type
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 -- Class.Class
 -- TypeClass
@@ -449,7 +448,7 @@ instance Hashable Class.Class where
            ++ uniqueBytes op_stuff -- TODO: test this stuff
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable ty => Hashable (DefMethSpec ty) where
     typeID x = case x of
@@ -463,7 +462,7 @@ instance Hashable ty => Hashable (DefMethSpec ty) where
           GenericDM ty -> uniqueBytes ty
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable a => Hashable (Core.Bind a) where
     typeID (Core.NonRec _ _) = 0x00015000
@@ -476,7 +475,7 @@ instance Hashable a => Hashable (Core.Bind a) where
           Core.Rec l -> uniqueBytes l
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 instance Hashable Core.AltCon where
     typeID x = case x of
@@ -492,13 +491,25 @@ instance Hashable Core.AltCon where
           Core.DEFAULT   -> []
 
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
--- TODO: TyCon
-{-|
+-- TyCon
 instance Hashable TyCon.TyCon where
-    typeID x = case x of
-      FunTyCon{} -> 0x0000E000
+    typeID x =
+        if TyCon.isFunTyCon x then              0x00020000
+        else if TyCon.isAlgTyCon x then         0x00020001
+        else if TyCon.isTypeSynonymTyCon x then 0x00020002
+        else if TyCon.isFamilyTyCon x then      0x00020003
+        else if TyCon.isPrimTyCon x then        0x00020004
+        else if TyCon.isPromotedDataCon x then  0x00020005
+        -- only used during typechecking
+        -- else if TyCon.isTcTyCon x then          0x00020006
+        else 0x00020006
 
-    uniqueBytes x = []
-|-}
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = []
+        -- TODO: get bts
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts

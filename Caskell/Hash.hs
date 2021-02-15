@@ -55,7 +55,7 @@ primitiveBytes x = bytes where
     tb = typeID' x
     bts = toBytes x
     lb = toBytes (sum $ map (BS.length) bts)
-    bytes = tb ++ lb ++ bts
+    bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 
 -- primitives
 instance Hashable Word where
@@ -113,7 +113,7 @@ instance (Hashable a) => Hashable [a] where
         tb = typeID' x
         bts = concatMap (uniqueBytes) x
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 
 -- the rest
 instance Hashable a => Hashable (Ratio a) where
@@ -125,7 +125,7 @@ instance Hashable a => Hashable (Ratio a) where
         len1 = sum $ map (BS.length) bts1
         len2 = sum $ map (BS.length) bts2
         lb = toBytes (len1 + len2)
-        bytes = tb ++ lb ++ bts1 ++ bts2
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts1 ++ bts2
 
 instance Hashable FastString where
     typeID = const 0x0000000F
@@ -140,7 +140,7 @@ instance Hashable a => Hashable (Maybe a) where
           Just y -> uniqueBytes y
           Nothing -> []
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 
 instance (Ix i, Hashable i, Hashable v) => Hashable (Array i v) where
     typeID = const 0x00000012
@@ -148,7 +148,7 @@ instance (Ix i, Hashable i, Hashable v) => Hashable (Array i v) where
         tb = typeID' x
         bts = concatMap (\(i,v) -> uniqueBytes i ++ uniqueBytes v) $ assocs x
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 
 instance (Hashable a) => Hashable (Pair a) where
     typeID = const 0x00000013
@@ -156,7 +156,7 @@ instance (Hashable a) => Hashable (Pair a) where
         tb = typeID' x
         bts = uniqueBytes (pFst x) ++ uniqueBytes (pSnd x)
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 
 {-|
 -- UNIQUES ARE NOT STABLE ACROSS REBUILDS
@@ -167,7 +167,7 @@ instance Hashable Unique where
         tb = typeID' x
         bts = uniqueBytes $ Unique.getKey x
         lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ lb ++ bts
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
 |-}
 
 
@@ -181,7 +181,7 @@ instance (Hashable a, Hashable b)
         len1 = sum $ map (BS.length) bts1
         len2 = sum $ map (BS.length) bts2
         lb = toBytes (len1 + len2)
-        bytes = tb ++ lb ++ bts1 ++ bts2
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts1 ++ bts2
 
 instance (Hashable a, Hashable b, Hashable c)
   => Hashable (a, b, c) where
@@ -195,7 +195,7 @@ instance (Hashable a, Hashable b, Hashable c)
         len2 = sum $ map (BS.length) bts2
         len3 = sum $ map (BS.length) bts3
         lb = toBytes (len1 + len2 + len3)
-        bytes = tb ++ lb ++ bts1 ++ bts2 ++ bts3
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts1 ++ bts2 ++ bts3
 
 instance (Hashable a, Hashable b, Hashable c, Hashable d)
   => Hashable (a, b, c, d) where
@@ -211,4 +211,4 @@ instance (Hashable a, Hashable b, Hashable c, Hashable d)
         len3 = sum $ map (BS.length) bts3
         len4 = sum $ map (BS.length) bts4
         lb = toBytes (len1 + len2 + len3 + len4)
-        bytes = tb ++ lb ++ bts1 ++ bts2 ++ bts3 ++ bts4
+        bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts1 ++ bts2 ++ bts3 ++ bts4
