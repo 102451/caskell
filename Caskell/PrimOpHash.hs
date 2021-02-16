@@ -549,7 +549,7 @@ instance Hashable PrimOp.PrimOp where
       PrimOp.TraceEventOp -> 0x00015211
       PrimOp.TraceEventBinaryOp -> 0x00015212
       PrimOp.TraceMarkerOp -> 0x00015213
-      PrimOp.GetThreadAllocationCounter -> 0x00015214
+      -- PrimOp.GetThreadAllocationCounter -> 0x00015214
       PrimOp.SetThreadAllocationCounter -> 0x00015215
       PrimOp.VecBroadcastOp _ _ _ -> 0x00015216
       PrimOp.VecPackOp _ _ _ -> 0x00015217
@@ -635,7 +635,7 @@ instance BinarySerializable CmmType.Width where
           CmmType.W16 -> 0x10
           CmmType.W32 -> 0x20
           CmmType.W64 -> 0x40
-          CmmType.W80 -> 0x50
+          -- CmmType.W80 -> 0x50
           CmmType.W128 -> 0x80
           CmmType.W256 -> 0x100
           CmmType.W512 -> 0x200

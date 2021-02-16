@@ -14,7 +14,8 @@ module Caskell.Hash
 
     binaryToHash,
     getHash,
-    primitiveBytes
+    primitiveBytes,
+    uniqueBytesFromMaybe
 ) where
 
 
@@ -56,6 +57,10 @@ primitiveBytes x = bytes where
     bts = toBytes x
     lb = toBytes (sum $ map (BS.length) bts)
     bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
+
+uniqueBytesFromMaybe :: Hashable a => Maybe a -> Bytes
+uniqueBytesFromMaybe (Just x) = uniqueBytes x
+uniqueBytesFromMaybe Nothing  = []
 
 -- primitives
 instance Hashable Word where

@@ -115,7 +115,7 @@ instance Hashable Type where
     typeID (AppTy _ _)    = 0x00003001
     typeID (TyConApp _ _) = 0x00003002
     typeID (ForAllTy _ _) = 0x00003003
-    typeID (FunTy _ _)    = 0x00003004
+    typeID (FunTy{})      = 0x00003004
     typeID (LitTy _)      = 0x00003005
     typeID (CastTy _ _)   = 0x00003006
     typeID (CoercionTy _) = 0x00003007
@@ -127,7 +127,7 @@ instance Hashable Type where
           AppTy t1 t2 -> uniqueBytes t1 ++ uniqueBytes t2
           TyConApp tcon l -> uniqueBytes tcon ++ concatMap (uniqueBytes) l
           ForAllTy bndr t -> uniqueBytes bndr ++ uniqueBytes t
-          FunTy t1 t2 -> uniqueBytes t1 ++ uniqueBytes t2
+          FunTy ft_af t1 t2 -> uniqueBytes ft_af ++ uniqueBytes t1 ++ uniqueBytes t2
           LitTy tlit -> uniqueBytes tlit
           CastTy t kcoer -> uniqueBytes t ++ uniqueBytes kcoer
           CoercionTy coer -> uniqueBytes coer
@@ -153,12 +153,6 @@ instance Hashable Var.Var where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
-instance Hashable ArgFlag where
-    typeID Inferred  = 0x00004100
-    typeID Specified = 0x00004101
-    typeID Required  = 0x00004102
-    uniqueBytes = typeID'
-
 instance (Hashable a, Hashable b) => Hashable (Var.VarBndr a b) where
     typeID = const 0x00004004
     uniqueBytes (Var.Bndr x y) = bytes where
@@ -166,6 +160,17 @@ instance (Hashable a, Hashable b) => Hashable (Var.VarBndr a b) where
         bts = uniqueBytes (x, y)
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
+
+instance Hashable ArgFlag where
+    typeID Inferred  = 0x00004100
+    typeID Specified = 0x00004101
+    typeID Required  = 0x00004102
+    uniqueBytes = typeID'
+
+instance Hashable Var.AnonArgFlag where
+    typeID Var.VisArg  = 0x00004200
+    typeID Var.InvisArg = 0x00004201
+    uniqueBytes = typeID'
 
 instance Hashable TyLit where
     typeID (NumTyLit _) = 0x00005000
@@ -493,6 +498,12 @@ instance Hashable Core.AltCon where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
+bytes_synTyConRhs x = b where
+  y = TyCon.synTyConRhs_maybe x
+  b = case y of
+    Just rhs -> uniqueBytes rhs
+    Nothing  -> []
+
 -- TyCon
 instance Hashable TyCon.TyCon where
     typeID x =
@@ -508,8 +519,100 @@ instance Hashable TyCon.TyCon where
 
     uniqueBytes x = bytes where
         tb = typeID' x
-        bts = []
+
+        bndrs = uniqueBytes $ TyCon.tyConBinders x
+        result_kind = uniqueBytes $ TyCon.tyConResKind x
+        -- TyCon.tyConTyVars is a cached field of tyConBinders
+        -- TyCon.tyConArity is a cached field of length (tyConBinders)
+
+        bts =
+          if TyCon.isAlgTyCon x then
+            toBytes (TyCon.tyConRoles x)
+         ++ uniqueBytes (TyCon.tyConStupidTheta x)
+         ++ uniqueBytes (TyCon.algTyConRhs x)
+         -- TODO: ++ uniqueBytes TyCon.algTyConParent??
+         
+          else if TyCon.isTypeSynonymTyCon x then
+            toBytes (TyCon.tyConRoles x)
+         ++ uniqueBytes (TyCon.tyConStupidTheta x)
+         ++ uniqueBytesFromMaybe (TyCon.synTyConRhs_maybe x)
+
+          else if TyCon.isFamilyTyCon x then
+            toBytes (TyCon.tyConRoles x)
+         ++ uniqueBytes (TyCon.tyConStupidTheta x)
+         ++ uniqueBytesFromMaybe (TyCon.famTyConFlav_maybe x)
+
+          else if TyCon.isPrimTyCon x then
+            toBytes (TyCon.tyConRoles x)
+         ++ uniqueBytes (TyCon.tyConStupidTheta x)
+         ++ uniqueBytes (TyCon.isUnliftedTyCon x)
+
+          else if TyCon.isPromotedDataCon x then
+            toBytes (TyCon.tyConRoles x)
+         ++ uniqueBytes (TyCon.tyConStupidTheta x)
+         ++ uniqueBytesFromMaybe (TyCon.isPromotedDataCon_maybe x)
+          else
         -- TODO: get bts
+            []
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
+
+instance Hashable TyCon.TyConBndrVis where
+    typeID (TyCon.NamedTCB _) = 0x00021000
+    typeID (TyCon.AnonTCB _)  = 0x00021001
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          TyCon.NamedTCB y -> uniqueBytes y
+          TyCon.AnonTCB y -> uniqueBytes y
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
+
+-- Type constructor right hand side of data
+instance Hashable TyCon.AlgTyConRhs where
+    typeID TyCon.AbstractTyCon = 0x00022000
+    typeID TyCon.DataTyCon{}   = 0x00022001
+    typeID TyCon.TupleTyCon{}  = 0x00022002
+    typeID TyCon.SumTyCon{}    = 0x00022003
+    typeID TyCon.NewTyCon{}    = 0x00022004
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          TyCon.DataTyCon{data_cons = data_cons} -> uniqueBytes data_cons
+          TyCon.TupleTyCon{data_con = data_con, tup_sort = tup_sort} -> uniqueBytes data_con ++ toBytes tup_sort
+          TyCon.SumTyCon{data_cons = data_cons} -> uniqueBytes data_cons
+          TyCon.NewTyCon{data_con = data_con, nt_rhs = nt_rhs} -> uniqueBytes data_con ++ uniqueBytes nt_rhs
+          _ -> []
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
+
+instance BinarySerializable BasicTypes.TupleSort where
+    toBytes x = toBytes b where
+      b = case x of
+        BoxedTuple      -> 0x00 :: Word8
+        UnboxedTuple    -> 0x01
+        ConstraintTuple -> 0x02
+
+instance Hashable TyCon.FamTyConFlav where
+    typeID x = case x of
+      TyCon.DataFamilyTyCon _            -> 0x00023000
+      TyCon.OpenSynFamilyTyCon           -> 0x00023001
+      TyCon.ClosedSynFamilyTyCon _       -> 0x00023002
+      TyCon.AbstractClosedSynFamilyTyCon -> 0x00023003
+      TyCon.BuiltInSynFamTyCon _         -> 0x00023004
+
+    uniqueBytes x = bytes where
+        tb = typeID' x
+        bts = case x of
+          TyCon.DataFamilyTyCon name   -> [] --TODO: get rid of name
+          TyCon.ClosedSynFamilyTyCon m -> uniqueBytes m
+          TyCon.BuiltInSynFamTyCon b   -> [] -- TODO: uniqueBytes b
+          _ -> []
 
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
