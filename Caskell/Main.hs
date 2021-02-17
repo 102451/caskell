@@ -11,13 +11,13 @@ arguments :: Parser Arguments
 arguments = Arguments
     <$> many (argument str (metavar "TARGET..."))
 
-runCaskell :: Arguments -> IO ()
-runCaskell (Arguments files) = do
-    mapM compileFile files
+run_caskell :: Arguments -> IO ()
+run_caskell (Arguments files) = do
+    mapM compile_file files
     return ()
 
 main :: IO ()
-main = runCaskell =<< execParser opts
+main = run_caskell =<< execParser opts
     where
         opts = info (arguments <**> helper)
             (fullDesc <> progDesc "Content-Addressed Haskell tool" <> header "caskell - a tool for content-addressed haskell")
