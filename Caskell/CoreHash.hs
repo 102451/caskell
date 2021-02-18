@@ -544,7 +544,6 @@ instance Hashable TyCon.TyCon where
 
           else if TyCon.isPrimTyCon x then
             toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.tyConStupidTheta x)
          ++ uniqueBytes (TyCon.isUnliftedTyCon x)
 
           else if TyCon.isPromotedDataCon x then
