@@ -14,6 +14,8 @@ import qualified Name
 import Outputable (Outputable, showPpr, ppr, showSDocUnsafe)
 import qualified GHC.Paths as Paths
 
+import Control.Monad
+import Control.Monad.State
 import Data.Functor
 import Data.Coerce
 import Data.Typeable
@@ -50,21 +52,29 @@ hash_expr x = getHash bytes where
       CoreSyn.Lit lit -> uniqueBytes lit
       _ -> []
 
-hash_bind :: CoreSyn.CoreBind -> (String, Hash)
-hash_bind (CoreSyn.NonRec b expr) = (Name.nameStableString $ Var.varName b, hash_expr expr)
+hash_bind :: CoreSyn.CoreBind -> CtxMonad ()
+hash_bind cb@(CoreSyn.NonRec b expr) = do
+    let name = Var.varName b
+    let uniq = Name.nameUnique name
+    let hash = hash_expr expr
+
+    insert_hash $ BindHash name cb hash
+
 hash_bind (CoreSyn.Rec l) = undefined
 
 
-hash_binds :: CoreSyn.CoreProgram -> StateCtx ()
+hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
     binds' <- get_bind_hashes
-    set_bind_hashes $ map (hash_bind) binds
-    
+    mapM (hash_bind) binds
+    a <- lookup_name "a"
+    lift $ putStrLn $ show a
+    return ()
 
-run_context :: StateCtx () -> Context
-run_context s = execState s $ empty_context
+run_context :: CtxMonad () -> IO Context
+run_context s = execStateT s $ empty_context
 
-hash_module :: GHC.CoreModule -> GHC.Ghc Context
+hash_module :: GHC.CoreModule -> GHC.Ghc (IO Context)
 hash_module (GHC.CoreModule _ _ binds _) = return $ run_context $ hash_binds binds
 
 
@@ -78,7 +88,8 @@ compile_file file = do
     -- let ghc = ghcCore >>= pretty_print_binds
     let ghc = ghcCore >>= hash_module
     let ret = run_ghc_with_libpath ghc
-    putStrLn =<< fmap (show) ret
+    result <- ret
+    putStrLn =<< fmap (show) result
 
 
 run_tests :: IO ()
