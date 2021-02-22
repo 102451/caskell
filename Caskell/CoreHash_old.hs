@@ -6,8 +6,7 @@
 
 module Caskell.CoreHash
 (
-    uniqueBytes,
-    hash_module
+    uniqueBytes
 ) where
 
 import qualified Data.ByteArray as BA
@@ -15,7 +14,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified GHC
 import qualified Name
-import qualified CoreSyn
+import qualified CoreSyn as Core
 import qualified Literal
 import qualified Var
 import qualified IdInfo
@@ -32,9 +31,6 @@ import TyCon
 import TyCoRep
 import CoAxiom
 
-import Control.Monad
-import Control.Monad.State
-import Data.Functor
 import Data.Functor
 import Data.Coerce
 import Data.Typeable
@@ -45,86 +41,36 @@ import Unique
 import Caskell.Bytes
 import Caskell.Hash
 import Caskell.PrimOpHash
-import Caskell.Context
 
 
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
-hash_module :: GHC.CoreModule -> CtxMonad ()
-hash_module = undefined
-
-hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
-hash_binds binds = do
-    mapM (hash_bind) binds
-    a <- lookup_name "a"
-    lift $ putStrLn $ show a
-    return ()
-
-hash_bind :: CoreSyn.CoreBind -> CtxMonad ()
-hash_bind cb@(CoreSyn.NonRec b expr) = do
-    let name = Var.varName b
-    let uniq = Name.nameUnique name
-    let hash_data = CoreBind cb
-
-    -- debug stuff
-    let null_hash = getHash ([]::[Int])
-    let sname = short_name name
-
-    hash <- case expr of
-        CoreSyn.Var var -> do
-            lift $ putStrLn (sname ++ " = var")
-            return null_hash
-
-        CoreSyn.Lit lit -> do
-            lift $ putStrLn (sname ++ " = literal")
-            return $ getHash $ uniqueBytes lit
-
-        CoreSyn.App e1 e2 -> do
-            lift $ putStrLn (sname ++ " = application")
-            return $ null_hash
-
-{-|
-        CoreSyn.Lam b e -> uniqueBytes b ++ uniqueBytes e
-        CoreSyn.Let b e -> uniqueBytes b ++ uniqueBytes e
-        CoreSyn.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
-        CoreSyn.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
-            uniqueBytes e
-        CoreSyn.Type t -> uniqueBytes t
-        CoreSyn.Coercion coer -> uniqueBytes coer
-        |-}
-        _ -> return null_hash
-
-    insert_hash $ UniqueHash uniq hash_data hash
-
-hash_bind (CoreSyn.Rec l) = undefined
-
-
-instance Hashable b => Hashable (CoreSyn.Expr b) where
-    typeID (CoreSyn.Var _)          = 0x00001000
-    typeID (CoreSyn.Lit _)          = 0x00001001
-    typeID (CoreSyn.App _ _)        = 0x00001002
-    typeID (CoreSyn.Lam _ _)        = 0x00001003
-    typeID (CoreSyn.Let _ _)        = 0x00001004
-    typeID (CoreSyn.Case _ _ _ _)   = 0x00001005
-    typeID (CoreSyn.Cast _ _)       = 0x00001006
-    typeID (CoreSyn.Tick _ _)       = 0x00001007
-    typeID (CoreSyn.Type _)         = 0x00001008
+instance Hashable b => Hashable (Core.Expr b) where
+    typeID (Core.Var _)          = 0x00001000
+    typeID (Core.Lit _)          = 0x00001001
+    typeID (Core.App _ _)        = 0x00001002
+    typeID (Core.Lam _ _)        = 0x00001003
+    typeID (Core.Let _ _)        = 0x00001004
+    typeID (Core.Case _ _ _ _)   = 0x00001005
+    typeID (Core.Cast _ _)       = 0x00001006
+    typeID (Core.Tick _ _)       = 0x00001007
+    typeID (Core.Type _)         = 0x00001008
 
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
-          CoreSyn.Var var -> uniqueBytes var
-          CoreSyn.Lit lit -> uniqueBytes lit
-          CoreSyn.App e1 e2 -> uniqueBytes e1 ++ uniqueBytes e2
-          CoreSyn.Lam b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Let b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
-          CoreSyn.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
-          CoreSyn.Tick tick e -> -- uniqueBytes tick ++ -- tickish is not useful
+          Core.Var var -> uniqueBytes var
+          Core.Lit lit -> uniqueBytes lit
+          Core.App e1 e2 -> uniqueBytes e1 ++ uniqueBytes e2
+          Core.Lam b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Let b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
+          Core.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
+          Core.Tick tick e -> -- uniqueBytes tick ++ -- tickish is not useful
               uniqueBytes e
-          CoreSyn.Type t -> uniqueBytes t
-          CoreSyn.Coercion coer -> uniqueBytes coer
+          Core.Type t -> uniqueBytes t
+          Core.Coercion coer -> uniqueBytes coer
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
@@ -523,31 +469,31 @@ instance Hashable ty => Hashable (DefMethSpec ty) where
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
-instance Hashable a => Hashable (CoreSyn.Bind a) where
-    typeID (CoreSyn.NonRec _ _) = 0x00015000
-    typeID (CoreSyn.Rec _)      = 0x00015001
+instance Hashable a => Hashable (Core.Bind a) where
+    typeID (Core.NonRec _ _) = 0x00015000
+    typeID (Core.Rec _)      = 0x00015001
 
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
-          CoreSyn.NonRec b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Rec l -> uniqueBytes l
+          Core.NonRec b e -> uniqueBytes b ++ uniqueBytes e
+          Core.Rec l -> uniqueBytes l
 
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
-instance Hashable CoreSyn.AltCon where
+instance Hashable Core.AltCon where
     typeID x = case x of
-      CoreSyn.DataAlt _ -> 0x00016000
-      CoreSyn.LitAlt _  -> 0x00016001
-      CoreSyn.DEFAULT   -> 0x00016002
+      Core.DataAlt _ -> 0x00016000
+      Core.LitAlt _  -> 0x00016001
+      Core.DEFAULT   -> 0x00016002
 
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
-          CoreSyn.DataAlt dc -> uniqueBytes dc
-          CoreSyn.LitAlt l  -> uniqueBytes l
-          CoreSyn.DEFAULT   -> []
+          Core.DataAlt dc -> uniqueBytes dc
+          Core.LitAlt l  -> uniqueBytes l
+          Core.DEFAULT   -> []
 
         lb = toBytes (sum $ map (BS.length) bts)
         bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts

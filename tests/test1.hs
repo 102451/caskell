@@ -1,6 +1,6 @@
 
 a :: Int
-a = 5
+a = 5 :: Int
 
 b :: Int
 b = 5

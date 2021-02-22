@@ -5,14 +5,15 @@
 module Caskell.Context
 (
     Context(..),
-    BindHash(..),
-    BindHashMap,
+    UniqueHash(..),
+    HashedData(..),
+    UniqueHashMap,
     CtxMonad,
     mkCtx,
     empty_context,
 
-    get_bind_hashes,
-    set_bind_hashes,
+    get_hashes,
+    set_hashes,
 
     get,
     put,
@@ -24,12 +25,15 @@ module Caskell.Context
     insert_hash,
 
     short_name,
-    short_hash_str
+    short_hash_data_name,
+    short_hash_str,
+    short_unique_hash_str
 ) where
 
 import qualified Unique
 import qualified Name
 import qualified CoreSyn
+import qualified Var
 import Control.Monad.State
 
 import Data.List.Split
@@ -38,29 +42,54 @@ import Caskell.Bytes
 import Caskell.Hash
 
 data Context = Ctx
-    { bind_hashes :: BindHashMap
+    { unique_hashes :: UniqueHashMap
     } deriving (Show)
 
 mkCtx = Ctx {
-bind_hashes = empty
+unique_hashes = empty
 }
 
-type BindHashMap = MultiKey BindHash
+empty_context = mkCtx
 
-data BindHash = BindHash
-    { name :: Name.Name -- contains the unique
-    , bind :: CoreSyn.CoreBind  -- just a reference
+type UniqueHashMap = MultiKey UniqueHash
+
+data UniqueHash = UniqueHash
+    { hash_unique :: Unique.Unique
+    , hash_data :: HashedData
     , hash :: Hash
     }
 
-short_name = last . splitOn "$" . Name.nameStableString . name
-short_hash_str = take 10 . show . hash
+data HashedData = CoreBind CoreSyn.CoreBind
+                | Var Var.Var
+    
+name :: HashedData -> Maybe Name.Name
+name (CoreBind cb) = case cb of
+    CoreSyn.NonRec b _ -> name (Var b)
+    CoreSyn.Rec _ -> undefined -- TODO: recursive
 
-instance MultiKeyable BindHash where
-    empty = MultiKey [key short_name, key (Name.nameUnique . name), key hash]
+name (Var v) = Just (Var.varName v)
+name _ = Nothing
 
-instance Show BindHash where
-    show a = short_name a ++ ": " ++ short_hash_str a
+null_hash = getHash ([]::[Int])
+
+short_hash_data_name uh = s where
+    n = name uh
+    s = case n of
+        Nothing -> "[no name]"
+        Just nam -> short_name nam
+short_name = last . splitOn "$" . Name.nameStableString
+
+short_hash_str = take 10 . show
+short_unique_hash_str x = s where
+    h = hash x
+    s = if h == null_hash then "NULL"
+        else short_hash_str h
+
+instance MultiKeyable UniqueHash where
+    empty = MultiKey [key (short_hash_data_name . hash_data), key hash_unique, key hash]
+
+instance Show UniqueHash where
+    show a = short_hash_data_name (hash_data a) ++ ": " ++ short_unique_hash_str a
 
 instance Show a => Show (MultiKey a) where
     show = show . toList
@@ -68,33 +97,32 @@ instance Show a => Show (MultiKey a) where
 instance Ord Unique.Unique where
     a <= b = Unique.getKey a <= Unique.getKey b
 
+
 type CtxMonad a = StateT Context IO a
 
-empty_context = mkCtx
+get_hashes :: CtxMonad UniqueHashMap
+get_hashes = state $ \ctx -> (unique_hashes ctx, ctx)
 
-get_bind_hashes :: CtxMonad BindHashMap
-get_bind_hashes = state $ \ctx -> (bind_hashes ctx, ctx)
+set_hashes :: UniqueHashMap -> CtxMonad ()
+set_hashes hs = state $ \ctx -> ((), ctx { unique_hashes = hs})
 
-set_bind_hashes :: BindHashMap -> CtxMonad ()
-set_bind_hashes hs = state $ \ctx -> ((), ctx { bind_hashes = hs})
-
-lookup_name :: String -> CtxMonad (Maybe BindHash)
+lookup_name :: String -> CtxMonad (Maybe UniqueHash)
 lookup_name key = do
-    binds <- get_bind_hashes
-    return $ Data.Map.MultiKey.lookup key binds
+    hashes <- get_hashes
+    return $ Data.Map.MultiKey.lookup key hashes
 
-lookup_unique :: Unique.Unique -> CtxMonad (Maybe BindHash)
+lookup_unique :: Unique.Unique -> CtxMonad (Maybe UniqueHash)
 lookup_unique key = do
-    binds <- get_bind_hashes
-    return $ Data.Map.MultiKey.lookup key binds
+    hashes <- get_hashes
+    return $ Data.Map.MultiKey.lookup key hashes
 
-lookup_hash :: Hash -> CtxMonad (Maybe BindHash)
+lookup_hash :: Hash -> CtxMonad (Maybe UniqueHash)
 lookup_hash key = do
-    binds <- get_bind_hashes
-    return $ Data.Map.MultiKey.lookup key binds
+    hashes <- get_hashes
+    return $ Data.Map.MultiKey.lookup key hashes
 
-insert_hash :: BindHash -> CtxMonad ()
+insert_hash :: UniqueHash -> CtxMonad ()
 insert_hash h = do
-    binds <- get_bind_hashes
-    let newbinds = insert h binds
-    set_bind_hashes newbinds
+    hashes <- get_hashes
+    let newhashes = insert h hashes
+    set_hashes newhashes
