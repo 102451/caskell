@@ -47,12 +47,13 @@ import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
 
+null_hash = getHash ([]::[Int])
 
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
 hash_module :: GHC.CoreModule -> CtxMonad ()
-hash_module = undefined
+hash_module (GHC.CoreModule _ _ binds _) = hash_binds binds
 
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
@@ -68,37 +69,68 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
     let hash_data = CoreBind cb
 
     -- debug stuff
-    let null_hash = getHash ([]::[Int])
     let sname = short_name name
+    
+    insert_hash $ UniqueHash uniq hash_data null_hash True
 
-    hash <- case expr of
-        CoreSyn.Var var -> do
-            lift $ putStrLn (sname ++ " = var")
-            return null_hash
+    lift $ putStr $ sname ++ " = "
+    bytes <- hash_bytes_expr expr
+    let hash = getHash bytes
+    lift $ putStrLn ""
 
-        CoreSyn.Lit lit -> do
-            lift $ putStrLn (sname ++ " = literal")
-            return $ getHash $ uniqueBytes lit
 
-        CoreSyn.App e1 e2 -> do
-            lift $ putStrLn (sname ++ " = application")
-            return $ null_hash
-
-{-|
-        CoreSyn.Lam b e -> uniqueBytes b ++ uniqueBytes e
-        CoreSyn.Let b e -> uniqueBytes b ++ uniqueBytes e
-        CoreSyn.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
-        CoreSyn.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
-            uniqueBytes e
-        CoreSyn.Type t -> uniqueBytes t
-        CoreSyn.Coercion coer -> uniqueBytes coer
-        |-}
-        _ -> return null_hash
-
-    insert_hash $ UniqueHash uniq hash_data hash
+    insert_hash $ UniqueHash uniq hash_data hash False
 
 hash_bind (CoreSyn.Rec l) = undefined
 
+hash_bytes_expr :: CoreSyn.Expr b -> CtxMonad (Bytes)
+hash_bytes_expr expr = do
+
+    bytes <- case expr of
+    -- TODO: implement
+        CoreSyn.Var var -> do
+            let t = Var.varType var
+            lift $ putStr $ "var(" ++ short_name (Var.varName var) ++ ")"
+            return []
+
+        CoreSyn.Lit lit -> do
+            lift $ putStr "literal"
+            return $ uniqueBytes lit
+
+        CoreSyn.App e1 e2 -> do
+            lift $ putStr "app("
+            b1 <- hash_bytes_expr e1
+            lift $ putStr ", "
+            b2 <- hash_bytes_expr e2
+            lift $ putStr ")"
+            return $ b1 ++ b2
+
+        CoreSyn.Lam b e -> do
+            lift $ putStr "lambda"
+            return []
+
+        CoreSyn.Let b e -> do
+            lift $ putStr "let"
+            return []
+
+        CoreSyn.Case e b t alts -> do
+            lift $ putStr "case"
+            return []
+
+        CoreSyn.Cast e coer -> do
+            lift $ putStr "cast"
+            return []
+
+        CoreSyn.Type t -> do
+            lift $ putStr "type"
+            return []
+
+        CoreSyn.Coercion coer -> do
+            lift $ putStr "coercion"
+            return []
+
+        _ -> return []
+    return bytes
 
 instance Hashable b => Hashable (CoreSyn.Expr b) where
     typeID (CoreSyn.Var _)          = 0x00001000

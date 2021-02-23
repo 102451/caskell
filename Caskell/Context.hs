@@ -57,6 +57,7 @@ data UniqueHash = UniqueHash
     { hash_unique :: Unique.Unique
     , hash_data :: HashedData
     , hash :: Hash
+    , hole :: Bool -- hole to be filled later
     }
 
 data HashedData = CoreBind CoreSyn.CoreBind
@@ -89,7 +90,11 @@ instance MultiKeyable UniqueHash where
     empty = MultiKey [key (short_hash_data_name . hash_data), key hash_unique, key hash]
 
 instance Show UniqueHash where
-    show a = short_hash_data_name (hash_data a) ++ ": " ++ short_unique_hash_str a
+    show a = short_hash_data_name (hash_data a) ++ ": " ++ short_unique_hash_str a ++ t where
+        t = case hole a of
+            True -> "(h)"
+            False -> ""
+           
 
 instance Show a => Show (MultiKey a) where
     show = show . toList

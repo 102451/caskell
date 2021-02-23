@@ -2,7 +2,8 @@
 module Caskell.Compile
     (
         compile_file,
-        run_tests
+        run_tests,
+        run_tests'
     ) where
 
 import qualified FastString as FS
@@ -66,3 +67,20 @@ compile_file file = do
 run_tests :: IO ()
 run_tests = do
     compile_file "tests/test1.hs"
+
+
+
+
+
+-- ETC
+compile_file' :: String -> IO ()
+compile_file' file = do
+    let ghcCore = GHC.compileToCoreModule file
+    let ghc = ghcCore >>= pretty_print_binds
+    let ret = run_ghc_with_libpath ghc
+    putStrLn =<< ret
+    return ()
+
+run_tests' :: IO ()
+run_tests' = do
+    compile_file' "tests/test1.hs"
