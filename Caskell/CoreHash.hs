@@ -47,13 +47,21 @@ import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
 
+data HashOrBytes = Hash Hash | Bytes Bytes
+
+hash_from_hash_or_bytes :: TypeID -> HashOrBytes -> Hash
+hash_from_hash_or_bytes tid (Bytes bytes) = get_hash $ manual_unique_bytes tid bytes
+hash_from_hash_or_bytes _ (Hash h) = h
+
 null_hash = get_hash ([]::[Int])
 
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
 hash_module :: GHC.CoreModule -> CtxMonad ()
-hash_module (GHC.CoreModule _ _ binds _) = hash_binds binds
+hash_module guts@(GHC.CoreModule _ _ binds _) = do
+    set_mod_guts guts
+    hash_binds binds
 
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
@@ -76,74 +84,108 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
         insert_hash $ UniqueHash uniq hash_data null_hash True
 
         lift $ putStr $ sname ++ " = "
-        bytes <- hash_bytes_expr expr
-        let hash = get_hash bytes
+        hash <- hash_expr expr
         lift $ putStrLn ""
 
         insert_hash $ UniqueHash uniq hash_data hash False
 
 hash_bind (CoreSyn.Rec l) = undefined
 
-hash_bytes_expr :: CoreSyn.Expr b -> CtxMonad (Bytes)
-hash_bytes_expr expr = do
+hash_expr :: CoreSyn.Expr b -> CtxMonad (Hash)
+hash_expr expr = do
+    let tid = typeID expr
+    let tname = typeName expr
 
-    bytes <- case expr of
+    lift $ putStr tname
+
+    hob <- case expr of
     -- TODO: implement
         CoreSyn.Var var -> do
             let t = Var.varType var
-            lift $ putStr $ "var(" ++ short_name (Var.varName var) ++ ")"
-            return []
+            lift $ putStr $ "(" ++ short_name (Var.varName var) ++ ")"
+
+            -- TODO: obtain the HASH of var
+            --       search in State or 
+            return $ Bytes []
 
         CoreSyn.Lit lit -> do
-            lift $ putStr "literal"
-            return $ [] -- uniqueBytes lit
+            lift $ putStr "."
+            h <- hash_literal lit
+            return $ Hash h
 
         CoreSyn.App e1 e2 -> do
-            lift $ putStr "app("
-            b1 <- hash_bytes_expr e1
+            lift $ putStr "("
+            b1 <- hash_expr e1
             lift $ putStr ", "
-            b2 <- hash_bytes_expr e2
+            b2 <- hash_expr e2
             lift $ putStr ")"
-            return $ b1 ++ b2
+            return $ Bytes $ toBytes b1 ++ toBytes b2
 
         CoreSyn.Lam b e -> do
-            lift $ putStr "lambda"
-            return []
+            return $ Bytes []
 
         CoreSyn.Let b e -> do
-            lift $ putStr "let"
-            return []
+            return $ Bytes []
 
         CoreSyn.Case e b t alts -> do
-            lift $ putStr "case"
-            return []
+            return $ Bytes []
 
         CoreSyn.Cast e coer -> do
-            lift $ putStr "cast"
-            return []
+            return $ Bytes []
 
         CoreSyn.Type t -> do
-            lift $ putStr "type"
-            return []
+            return $ Bytes []
 
         CoreSyn.Coercion coer -> do
-            lift $ putStr "coercion"
-            return []
+            return $ Bytes []
 
-        _ -> return []
+        _ -> return $ Bytes []
 
-    return bytes
+    let hash = hash_from_hash_or_bytes tid hob
 
+    return hash
+
+hash_literal :: Literal.Literal -> CtxMonad (Hash)
+hash_literal lit = do
+    let tid = typeID lit
+    let tname = typeName lit
+
+    lift $ putStr tname
+
+    hob <- case lit of
+        Literal.LitChar c -> do
+            return $ Bytes []
+        _ -> do
+            return $ Bytes []
+
+    let hash = hash_from_hash_or_bytes tid hob
+
+    return hash
+
+-- ========
+-- TYPE IDS
+-- ========
 instance TypeIDAble (CoreSyn.Expr b) where
-    typeID (CoreSyn.Var _)          = 0x00001000
-    typeID (CoreSyn.Lit _)          = 0x00001001
-    typeID (CoreSyn.App _ _)        = 0x00001002
-    typeID (CoreSyn.Lam _ _)        = 0x00001003
-    typeID (CoreSyn.Let _ _)        = 0x00001004
-    typeID (CoreSyn.Case _ _ _ _)   = 0x00001005
-    typeID (CoreSyn.Cast _ _)       = 0x00001006
-    typeID (CoreSyn.Tick _ _)       = 0x00001007
-    typeID (CoreSyn.Type _)         = 0x00001008
+    typeID x = case x of
+        CoreSyn.Var _        -> 0x00001000
+        CoreSyn.Lit _        -> 0x00001001
+        CoreSyn.App _ _      -> 0x00001002
+        CoreSyn.Lam _ _      -> 0x00001003
+        CoreSyn.Let _ _      -> 0x00001004
+        CoreSyn.Case _ _ _ _ -> 0x00001005
+        CoreSyn.Cast _ _     -> 0x00001006
+        CoreSyn.Tick _ _     -> 0x00001007
+        CoreSyn.Type _       -> 0x00001008
+
+    typeName (CoreSyn.Var _)          = "Var"
+    typeName (CoreSyn.Lit _)          = "Literal"
+    typeName (CoreSyn.App _ _)        = "Application"
+    typeName (CoreSyn.Lam _ _)        = "Lambda"
+    typeName (CoreSyn.Let _ _)        = "Let"
+    typeName (CoreSyn.Case _ _ _ _)   = "Case"
+    typeName (CoreSyn.Cast _ _)       = "Cast"
+    typeName (CoreSyn.Tick _ _)       = "Tick"
+    typeName (CoreSyn.Type _)         = "Type"
 
 instance TypeIDAble Literal.Literal where
     typeID (Literal.LitChar _)          = 0x00002000
@@ -154,6 +196,15 @@ instance TypeIDAble Literal.Literal where
     typeID (Literal.LitFloat _)         = 0x00002005
     typeID (Literal.LitDouble _)        = 0x00002006
     typeID (Literal.LitLabel _ _ _)     = 0x00002007
+
+    typeName (Literal.LitChar _)          = "LitChar"
+    typeName (Literal.LitNumber _ _ _)    = "LitNumber"
+    typeName (Literal.LitString _)        = "LitString"
+    typeName (Literal.LitNullAddr)        = "LitNullAddr"
+    typeName (Literal.LitRubbish)         = "LitRubbish"
+    typeName (Literal.LitFloat _)         = "LitFloat"
+    typeName (Literal.LitDouble _)        = "LitDouble"
+    typeName (Literal.LitLabel _ _ _)     = "LitLabel"
 
 instance TypeIDAble Type where
     typeID (TyVarTy _)    = 0x00003000

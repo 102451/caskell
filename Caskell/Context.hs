@@ -14,6 +14,8 @@ module Caskell.Context
 
     get_hashes,
     set_hashes,
+    get_mod_guts,
+    set_mod_guts,
 
     get,
     put,
@@ -35,6 +37,7 @@ import qualified Unique
 import qualified Name
 import qualified CoreSyn
 import qualified Var
+import qualified GHC
 import Control.Monad.State
 
 import Data.List.Split
@@ -44,10 +47,15 @@ import Caskell.Hash
 
 data Context = Ctx
     { unique_hashes :: UniqueHashMap
-    } deriving (Show)
+    , mod_guts :: GHC.CoreModule
+    }
+
+instance Show Context where
+    show = show . unique_hashes
 
 mkCtx = Ctx {
-unique_hashes = empty
+unique_hashes = empty,
+mod_guts = undefined
 }
 
 empty_context = mkCtx
@@ -111,6 +119,12 @@ get_hashes = state $ \ctx -> (unique_hashes ctx, ctx)
 
 set_hashes :: UniqueHashMap -> CtxMonad ()
 set_hashes hs = state $ \ctx -> ((), ctx { unique_hashes = hs})
+
+get_mod_guts :: CtxMonad GHC.CoreModule
+get_mod_guts = state $ \ctx -> (mod_guts ctx, ctx)
+
+set_mod_guts :: GHC.CoreModule -> CtxMonad ()
+set_mod_guts guts = state $ \ctx -> ((), ctx { mod_guts = guts})
 
 lookup_name :: String -> CtxMonad (Maybe UniqueHash)
 lookup_name key = do

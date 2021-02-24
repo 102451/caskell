@@ -16,6 +16,7 @@ module Caskell.Bytes
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Crypto.Hash as CH
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -38,6 +39,9 @@ instance BinarySerializable BS.ByteString where
 
 instance BinarySerializable BSL.ByteString where
     toBytes = BSL.toChunks
+
+instance BinarySerializable (CH.Digest a) where
+    toBytes d = [BA.convert d]
 
 instance BinarySerializable a => BinarySerializable [a] where
     toBytes = concat . map (toBytes)

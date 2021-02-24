@@ -17,6 +17,7 @@ module Caskell.Hash
 
     binary_to_hash,
     get_hash,
+    manual_unique_bytes,
     primitive_bytes,
     uniqueBytesFromMaybe
 ) where
@@ -41,7 +42,7 @@ import Caskell.Bytes
 type TypeID = Word32
 type Hash = CH.Digest CH.SHA3_512
 
-binary_to_hash :: [BS.ByteString] -> Hash
+binary_to_hash :: Bytes -> Hash
 binary_to_hash = CH.hashFinalize . CH.hashUpdates CH.hashInit
 
 get_hash :: (Hashable a) => a -> Hash
@@ -53,17 +54,23 @@ class TypeIDAble a where
     typeName = const ""
 
 class (TypeIDAble a) => Hashable a where
-    uniqueBytes :: a -> [BS.ByteString]
+    uniqueBytes :: a -> Bytes
 
-typeID' :: Hashable a => a -> [BS.ByteString]
+typeID' :: TypeIDAble a => a -> Bytes
 typeID' = toBytes . typeID 
 
-primitive_bytes :: (Hashable a, BinarySerializable a) => a -> [BS.ByteString]
+manual_unique_bytes :: TypeID -> Bytes -> Bytes
+manual_unique_bytes td bts = bytes where
+    tb = toBytes td
+    len = fromIntegral (sum $ map (BS.length) bts) :: Int
+    lenb = toBytes len
+    bytes = tb ++ lenb ++ bts
+
+primitive_bytes :: (Hashable a, BinarySerializable a) => a -> Bytes
 primitive_bytes x = bytes where
-    tb = typeID' x
+    td = typeID x
     bts = toBytes x
-    lb = toBytes (sum $ map (BS.length) bts)
-    bytes = tb ++ (toBytes (fromIntegral (BS.length $ head lb) :: Word8)) ++ lb ++ bts
+    bytes = manual_unique_bytes td bts
 
 uniqueBytesFromMaybe :: Hashable a => Maybe a -> Bytes
 uniqueBytesFromMaybe (Just x) = uniqueBytes x
