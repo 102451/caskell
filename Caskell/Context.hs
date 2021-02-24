@@ -19,6 +19,7 @@ module Caskell.Context
     put,
     show,
 
+    Data.Map.MultiKey.lookup,
     lookup_name, -- only for debug
     lookup_unique,
     lookup_hash,
@@ -71,7 +72,7 @@ name (CoreBind cb) = case cb of
 name (Var v) = Just (Var.varName v)
 name _ = Nothing
 
-null_hash = getHash ([]::[Int])
+null_hash = get_hash ([]::[Int])
 
 short_hash_data_name uh = s where
     n = name uh

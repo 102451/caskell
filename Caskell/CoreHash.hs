@@ -34,7 +34,7 @@ import CoAxiom
 
 import Control.Monad
 import Control.Monad.State
-import Data.Functor
+import Data.List
 import Data.Functor
 import Data.Coerce
 import Data.Typeable
@@ -47,7 +47,7 @@ import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
 
-null_hash = getHash ([]::[Int])
+null_hash = get_hash ([]::[Int])
 
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
@@ -58,8 +58,6 @@ hash_module (GHC.CoreModule _ _ binds _) = hash_binds binds
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
     mapM (hash_bind) binds
-    a <- lookup_name "a"
-    lift $ putStrLn $ show a
     return ()
 
 hash_bind :: CoreSyn.CoreBind -> CtxMonad ()
@@ -68,18 +66,21 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
     let uniq = Name.nameUnique name
     let hash_data = CoreBind cb
 
-    -- debug stuff
+    let fullname = Name.nameStableString name
+    let name_filter = any (flip (isSuffixOf) fullname) ["$main", "$trModule", "$dIP"]
+
     let sname = short_name name
+
+    when (not name_filter) $ do
     
-    insert_hash $ UniqueHash uniq hash_data null_hash True
+        insert_hash $ UniqueHash uniq hash_data null_hash True
 
-    lift $ putStr $ sname ++ " = "
-    bytes <- hash_bytes_expr expr
-    let hash = getHash bytes
-    lift $ putStrLn ""
+        lift $ putStr $ sname ++ " = "
+        bytes <- hash_bytes_expr expr
+        let hash = get_hash bytes
+        lift $ putStrLn ""
 
-
-    insert_hash $ UniqueHash uniq hash_data hash False
+        insert_hash $ UniqueHash uniq hash_data hash False
 
 hash_bind (CoreSyn.Rec l) = undefined
 
@@ -95,7 +96,7 @@ hash_bytes_expr expr = do
 
         CoreSyn.Lit lit -> do
             lift $ putStr "literal"
-            return $ uniqueBytes lit
+            return $ [] -- uniqueBytes lit
 
         CoreSyn.App e1 e2 -> do
             lift $ putStr "app("
@@ -130,9 +131,10 @@ hash_bytes_expr expr = do
             return []
 
         _ -> return []
+
     return bytes
 
-instance Hashable b => Hashable (CoreSyn.Expr b) where
+instance TypeIDAble (CoreSyn.Expr b) where
     typeID (CoreSyn.Var _)          = 0x00001000
     typeID (CoreSyn.Lit _)          = 0x00001001
     typeID (CoreSyn.App _ _)        = 0x00001002
@@ -143,36 +145,7 @@ instance Hashable b => Hashable (CoreSyn.Expr b) where
     typeID (CoreSyn.Tick _ _)       = 0x00001007
     typeID (CoreSyn.Type _)         = 0x00001008
 
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          CoreSyn.Var var -> uniqueBytes var
-          CoreSyn.Lit lit -> uniqueBytes lit
-          CoreSyn.App e1 e2 -> uniqueBytes e1 ++ uniqueBytes e2
-          CoreSyn.Lam b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Let b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Case e b t alts -> uniqueBytes e ++ uniqueBytes b ++ uniqueBytes t ++ uniqueBytes alts
-          CoreSyn.Cast e coer -> uniqueBytes e ++ uniqueBytes coer
-          CoreSyn.Tick tick e -> -- uniqueBytes tick ++ -- tickish is not useful
-              uniqueBytes e
-          CoreSyn.Type t -> uniqueBytes t
-          CoreSyn.Coercion coer -> uniqueBytes coer
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance BinarySerializable Literal.LitNumType where
-    toBytes Literal.LitNumInteger = toBytes (0x00 :: Word8)
-    toBytes Literal.LitNumNatural = toBytes (0x01 :: Word8)
-    toBytes Literal.LitNumInt     = toBytes (0x02 :: Word8)
-    toBytes Literal.LitNumInt64   = toBytes (0x03 :: Word8)
-    toBytes Literal.LitNumWord    = toBytes (0x04 :: Word8)
-    toBytes Literal.LitNumWord64  = toBytes (0x05 :: Word8)
-
-instance BinarySerializable BasicTypes.FunctionOrData where
-    toBytes BasicTypes.IsFunction = toBytes (0x00 :: Word8)
-    toBytes BasicTypes.IsData     = toBytes (0x01 :: Word8)
-
-instance Hashable Literal.Literal where
+instance TypeIDAble Literal.Literal where
     typeID (Literal.LitChar _)          = 0x00002000
     typeID (Literal.LitNumber _ _ _)    = 0x00002001
     typeID (Literal.LitString _)        = 0x00002002
@@ -182,21 +155,7 @@ instance Hashable Literal.Literal where
     typeID (Literal.LitDouble _)        = 0x00002006
     typeID (Literal.LitLabel _ _ _)     = 0x00002007
 
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          Literal.LitChar char -> uniqueBytes char
-          Literal.LitNumber l i t -> toBytes l ++ toBytes i ++ uniqueBytes t
-          Literal.LitString a -> [a]
-          Literal.LitNullAddr -> []
-          Literal.LitRubbish -> []
-          Literal.LitFloat ratio -> uniqueBytes ratio
-          Literal.LitDouble ratio -> uniqueBytes ratio
-          Literal.LitLabel s m fod -> uniqueBytes s ++ uniqueBytes m ++ toBytes fod
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable Type where
+instance TypeIDAble Type where
     typeID (TyVarTy _)    = 0x00003000
     typeID (AppTy _ _)    = 0x00003001
     typeID (TyConApp _ _) = 0x00003002
@@ -206,70 +165,21 @@ instance Hashable Type where
     typeID (CastTy _ _)   = 0x00003006
     typeID (CoercionTy _) = 0x00003007
 
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyVarTy var -> uniqueBytes var
-          AppTy t1 t2 -> uniqueBytes t1 ++ uniqueBytes t2
-          TyConApp tcon l -> uniqueBytes tcon ++ concatMap (uniqueBytes) l
-          ForAllTy bndr t -> uniqueBytes bndr ++ uniqueBytes t
-          FunTy ft_af t1 t2 -> uniqueBytes ft_af ++ uniqueBytes t1 ++ uniqueBytes t2
-          LitTy tlit -> uniqueBytes tlit
-          CastTy t kcoer -> uniqueBytes t ++ uniqueBytes kcoer
-          CoercionTy coer -> uniqueBytes coer
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable Var.Var where
+instance TypeIDAble Var.Var where
     typeID x
         | Var.isTyVar x   = 0x00004000
         | Var.isTcTyVar x = 0x00004001
         | Var.isId x      = 0x00004002
         | True            = 0x00004003
 
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts'
-          | Var.isTyVar x   = []
-          | Var.isTcTyVar x = uniqueBytes (Var.tcTyVarDetails x)
-          | Var.isId x = uniqueBytes (Var.idDetails x)
-                      -- https://downloads.haskell.org/~ghc/8.8.4/docs/html/libraries/ghc-8.8.4/src/IdInfo.html#IdInfo
-                      -- ++ uniqueBytes (Var.idInfo x) -- IdInfo may not be always present and is purely optional
-        bts = uniqueBytes (Var.varType x) ++ bts' -- name and unique are useless
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance (Hashable a, Hashable b) => Hashable (Var.VarBndr a b) where
+instance TypeIDAble (Var.VarBndr a b) where
     typeID = const 0x00004004
-    uniqueBytes (Var.Bndr x y) = bytes where
-        tb = typeID' (Var.Bndr x y)
-        bts = uniqueBytes (x, y)
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
-instance Hashable ArgFlag where
-    typeID Inferred  = 0x00004100
-    typeID Specified = 0x00004101
-    typeID Required  = 0x00004102
-    uniqueBytes = typeID'
-
-instance Hashable Var.AnonArgFlag where
-    typeID Var.VisArg  = 0x00004200
-    typeID Var.InvisArg = 0x00004201
-    uniqueBytes = typeID'
-
-instance Hashable TyLit where
+instance TypeIDAble TyLit where
     typeID (NumTyLit _) = 0x00005000
     typeID (StrTyLit _) = 0x00005001
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          NumTyLit i -> uniqueBytes i
-          StrTyLit s -> uniqueBytes s
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
-instance Hashable Coercion where
+instance TypeIDAble Coercion where
     typeID x = case x of
       TyCoRep.Refl _            -> 0x00006000
       TyCoRep.GRefl _ _ _       -> 0x00006001
@@ -290,30 +200,146 @@ instance Hashable Coercion where
       TyCoRep.SubCo _           -> 0x00006010
       TyCoRep.HoleCo _          -> 0x00006011
 
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCoRep.Refl t -> uniqueBytes t
-          TyCoRep.GRefl role t c -> toBytes role ++ uniqueBytes t ++ uniqueBytes c
-          TyCoRep.TyConAppCo role tcon l -> toBytes role ++ uniqueBytes tcon ++ uniqueBytes l
-          TyCoRep.AppCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
-          TyCoRep.ForAllCo vtycovar kc c -> uniqueBytes vtycovar ++ uniqueBytes kc ++ uniqueBytes c
-          TyCoRep.FunCo role c1 c2 -> toBytes role ++ uniqueBytes c1 ++ uniqueBytes c2
-          TyCoRep.CoVarCo cv -> uniqueBytes cv
-          TyCoRep.AxiomInstCo coax index l -> uniqueBytes coax ++ uniqueBytes index ++ uniqueBytes l
-          TyCoRep.AxiomRuleCo coaxrule l -> uniqueBytes coaxrule ++ uniqueBytes l
-          TyCoRep.UnivCo univ role t1 t2 -> uniqueBytes univ ++ toBytes role ++ uniqueBytes t1 ++ uniqueBytes t2
-          TyCoRep.SymCo c -> uniqueBytes c
-          TyCoRep.TransCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
-          TyCoRep.NthCo role i c -> toBytes role ++ uniqueBytes i ++ uniqueBytes c
-          TyCoRep.LRCo lr c -> toBytes lr ++ uniqueBytes c
-          TyCoRep.InstCo c1 c2 -> uniqueBytes c1 ++ uniqueBytes c2
-          TyCoRep.KindCo c -> uniqueBytes c
-          TyCoRep.SubCo c -> uniqueBytes c
-          TyCoRep.HoleCo _ -> [] -- ignore
+instance TypeIDAble MCoercion where
+    typeID x = case x of
+      TyCoRep.MRefl -> 0x00007000
+      TyCoRep.MCo _ -> 0x00007001
 
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
+instance TypeIDAble (CoAxiom.CoAxiom br) where
+    typeID = const 0x00008000
+
+-- IGNORE NAMES
+instance TypeIDAble Name.Name where
+    typeID = const 0x00009000
+
+instance TypeIDAble (Branches br) where
+    typeID = const 0x0000A000
+
+instance TypeIDAble CoAxBranch where
+    typeID = const 0x0000B000
+
+instance TypeIDAble CoAxiomRule where
+    typeID = const 0x0000C000
+
+instance TypeIDAble TyCoRep.UnivCoProvenance where
+    typeID x = case x of
+      TyCoRep.UnsafeCoerceProv -> 0x0000D000
+      TyCoRep.PhantomProv _    -> 0x0000D001
+      TyCoRep.ProofIrrelProv _ -> 0x0000D002
+      TyCoRep.PluginProv _     -> 0x0000D003
+    
+instance TypeIDAble IdInfo.IdDetails where
+    typeID x = case x of
+      IdInfo.VanillaId       -> 0x0000E000
+      IdInfo.RecSelId{}      -> 0x0000E001
+      IdInfo.DataConWorkId _ -> 0x0000E002
+      IdInfo.DataConWrapId _ -> 0x0000E003
+      IdInfo.ClassOpId _     -> 0x0000E004
+      IdInfo.PrimOpId _      -> 0x0000E005
+      IdInfo.FCallId _       -> 0x0000E006
+      IdInfo.TickBoxOpId _   -> 0x0000E007
+      IdInfo.DFunId _        -> 0x0000E008
+      IdInfo.CoVarId         -> 0x0000E009
+      IdInfo.JoinId _        -> 0x0000E00A
+
+instance TypeIDAble IdInfo.RecSelParent where
+    typeID x = case x of
+      IdInfo.RecSelData _   -> 0x0000F000
+      IdInfo.RecSelPatSyn _ -> 0x0000F001
+
+instance TypeIDAble PatSyn.PatSyn where
+    typeID = const 0x00010000
+
+
+instance TypeIDAble TcType.TcTyVarDetails where
+    typeID x = case x of
+      TcType.SkolemTv _ _   -> 0x00011000
+      TcType.RuntimeUnk     -> 0x00011001
+      TcType.MetaTv{}       -> 0x00011002
+
+-- DataCon.DataCon
+-- Data Constructor
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/DataCon.html#g:1
+instance TypeIDAble DataCon.DataCon where
+    typeID = const 0x00012000
+
+-- Class.Class
+-- TypeClass
+instance TypeIDAble Class.Class where
+    typeID = const 0x00013000
+
+instance TypeIDAble (DefMethSpec ty) where
+    typeID x = case x of
+      VanillaDM   -> 0x00014000
+      GenericDM _ -> 0x00014001
+
+-- 0x00015xxx is used by PrimOp
+instance TypeIDAble (CoreSyn.Bind a) where
+    typeID (CoreSyn.NonRec _ _) = 0x00015F00
+    typeID (CoreSyn.Rec _)      = 0x00015F01
+
+instance TypeIDAble CoreSyn.AltCon where
+    typeID x = case x of
+      CoreSyn.DataAlt _ -> 0x00016000
+      CoreSyn.LitAlt _  -> 0x00016001
+      CoreSyn.DEFAULT   -> 0x00016002
+
+-- TyCon
+instance TypeIDAble TyCon.TyCon where
+    typeID x =
+        if TyCon.isFunTyCon x then              0x00020000
+        else if TyCon.isAlgTyCon x then         0x00020001
+        else if TyCon.isTypeSynonymTyCon x then 0x00020002
+        else if TyCon.isFamilyTyCon x then      0x00020003
+        else if TyCon.isPrimTyCon x then        0x00020004
+        else if TyCon.isPromotedDataCon x then  0x00020005
+        -- only used during typechecking
+        -- else if TyCon.isTcTyCon x then          0x00020006
+        else 0x00020006
+
+instance TypeIDAble TyCon.TyConBndrVis where
+    typeID (TyCon.NamedTCB _) = 0x00021000
+    typeID (TyCon.AnonTCB _)  = 0x00021001
+
+-- Type constructor right hand side of data
+instance TypeIDAble TyCon.AlgTyConRhs where
+    typeID TyCon.AbstractTyCon = 0x00022000
+    typeID TyCon.DataTyCon{}   = 0x00022001
+    typeID TyCon.TupleTyCon{}  = 0x00022002
+    typeID TyCon.SumTyCon{}    = 0x00022003
+    typeID TyCon.NewTyCon{}    = 0x00022004
+
+instance TypeIDAble TyCon.FamTyConFlav where
+    typeID x = case x of
+      TyCon.DataFamilyTyCon _            -> 0x00023000
+      TyCon.OpenSynFamilyTyCon           -> 0x00023001
+      TyCon.ClosedSynFamilyTyCon _       -> 0x00023002
+      TyCon.AbstractClosedSynFamilyTyCon -> 0x00023003
+      TyCon.BuiltInSynFamTyCon _         -> 0x00023004
+
+-- =========================
+-- Binary Serializable stuff
+-- =========================
+instance BinarySerializable Literal.LitNumType where
+    toBytes Literal.LitNumInteger = toBytes (0x00 :: Word8)
+    toBytes Literal.LitNumNatural = toBytes (0x01 :: Word8)
+    toBytes Literal.LitNumInt     = toBytes (0x02 :: Word8)
+    toBytes Literal.LitNumInt64   = toBytes (0x03 :: Word8)
+    toBytes Literal.LitNumWord    = toBytes (0x04 :: Word8)
+    toBytes Literal.LitNumWord64  = toBytes (0x05 :: Word8)
+
+instance BinarySerializable BasicTypes.FunctionOrData where
+    toBytes BasicTypes.IsFunction = toBytes (0x00 :: Word8)
+    toBytes BasicTypes.IsData     = toBytes (0x01 :: Word8)
+
+instance BinarySerializable ArgFlag where
+    toBytes Inferred  = toBytes (0x00 :: Word8)
+    toBytes Specified = toBytes (0x01 :: Word8)
+    toBytes Required  = toBytes (0x02 :: Word8)
+
+instance BinarySerializable Var.AnonArgFlag where
+    toBytes Var.VisArg   = toBytes (0x00 :: Word8)
+    toBytes Var.InvisArg = toBytes (0x01 :: Word8)
 
 instance BinarySerializable BasicTypes.LeftOrRight where
     toBytes x = toBytes y where
@@ -328,177 +354,6 @@ instance BinarySerializable CoAxiom.Role where
           CoAxiom.Representational -> 0x01 :: Word8
           CoAxiom.Phantom          -> 0x02 :: Word8
 
-instance Hashable MCoercion where
-    typeID x = case x of
-      TyCoRep.MRefl -> 0x00007000
-      TyCoRep.MCo _ -> 0x00007001
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCoRep.MRefl -> []
-          TyCoRep.MCo c -> uniqueBytes c
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable (CoAxiom.CoAxiom br) where
-    typeID = const 0x00008000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = toBytes     (co_ax_role x)
-           ++ uniqueBytes (co_ax_tc x)
-           ++ uniqueBytes (co_ax_branches x)
-           ++ uniqueBytes (co_ax_implicit x)
-           -- Unique is not unique across builds
-           -- ++ uniqueBytes (co_ax_unique x)
-           -- Name is not part of content
-           -- ++ uniqueBytes (co_ax_name x)
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
--- IGNORE NAMES
-instance Hashable Name.Name where
-    typeID = const 0x00009000
-    uniqueBytes _ = []
-{-|
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = uniqueBytes (Name.nameUnique x)
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-|-}
-
-instance Hashable (Branches br) where
-    typeID = const 0x0000A000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = uniqueBytes $ unMkBranches x
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable CoAxBranch where
-    typeID = const 0x0000B000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        -- SrcLoc is ignored
-        bts = uniqueBytes (cab_tvs x)
-           ++ uniqueBytes (cab_eta_tvs x)
-           ++ uniqueBytes (cab_cvs x)
-           ++ concatMap (toBytes) (cab_roles x)
-           ++ uniqueBytes (cab_lhs x)
-           ++ uniqueBytes (cab_rhs x)
-           ++ uniqueBytes (cab_incomps x)
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable CoAxiomRule where
-    typeID = const 0x0000C000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = uniqueBytes (coaxrName x)
-           ++ concatMap (toBytes) (coaxrAsmpRoles x)
-           ++ toBytes (coaxrRole x)
-           -- ++ uniqueBytes (coaxrProves x)
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable TyCoRep.UnivCoProvenance where
-    typeID x = case x of
-      TyCoRep.UnsafeCoerceProv -> 0x0000D000
-      TyCoRep.PhantomProv _    -> 0x0000D001
-      TyCoRep.ProofIrrelProv _ -> 0x0000D002
-      TyCoRep.PluginProv _     -> 0x0000D003
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCoRep.UnsafeCoerceProv  -> []
-          TyCoRep.PhantomProv kc    -> uniqueBytes kc
-          TyCoRep.ProofIrrelProv kc -> uniqueBytes kc
-          TyCoRep.PluginProv s      -> uniqueBytes s
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-    
-instance Hashable IdInfo.IdDetails where
-    typeID x = case x of
-      IdInfo.VanillaId       -> 0x0000E000
-      IdInfo.RecSelId{}      -> 0x0000E001
-      IdInfo.DataConWorkId _ -> 0x0000E002
-      IdInfo.DataConWrapId _ -> 0x0000E003
-      IdInfo.ClassOpId _     -> 0x0000E004
-      IdInfo.PrimOpId _      -> 0x0000E005
-      IdInfo.FCallId _       -> 0x0000E006
-      IdInfo.TickBoxOpId _   -> 0x0000E007
-      IdInfo.DFunId _        -> 0x0000E008
-      IdInfo.CoVarId         -> 0x0000E009
-      IdInfo.JoinId _        -> 0x0000E00A
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          IdInfo.VanillaId        -> []
-          IdInfo.RecSelId{}       -> uniqueBytes (IdInfo.sel_tycon x) ++ toBytes (IdInfo.sel_naughty x)
-          IdInfo.DataConWorkId dc -> uniqueBytes dc
-          IdInfo.DataConWrapId dc -> uniqueBytes dc
-          IdInfo.ClassOpId cls    -> uniqueBytes cls
-          IdInfo.PrimOpId prim    -> uniqueBytes prim
-          IdInfo.FCallId _        -> [] -- ignored
-          IdInfo.TickBoxOpId _    -> [] -- ignored
-          IdInfo.DFunId b         -> toBytes b
-          IdInfo.CoVarId          -> []
-          IdInfo.JoinId ar        -> toBytes ar
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable IdInfo.RecSelParent where
-    typeID x = case x of
-      IdInfo.RecSelData _   -> 0x0000F000
-      IdInfo.RecSelPatSyn _ -> 0x0000F001
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          IdInfo.RecSelData tc    -> uniqueBytes tc
-          IdInfo.RecSelPatSyn pat -> uniqueBytes pat
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable PatSyn.PatSyn where
-    typeID = const 0x00010000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        (tvar, req, extvar, prov, arg_tys, res_ty) = PatSyn.patSynSig x
-        bts = uniqueBytes tvar
-           ++ uniqueBytes req
-           ++ uniqueBytes extvar
-           ++ uniqueBytes prov
-           ++ uniqueBytes arg_tys
-           ++ uniqueBytes res_ty
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-
-instance Hashable TcType.TcTyVarDetails where
-    typeID x = case x of
-      TcType.SkolemTv _ _   -> 0x00011000
-      TcType.RuntimeUnk     -> 0x00011001
-      TcType.MetaTv{}       -> 0x00011002
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TcType.SkolemTv lv b -> toBytes lv ++ toBytes b
-          TcType.RuntimeUnk -> []
-          TcType.MetaTv{ TcType.mtv_info = info, TcType.mtv_tclvl = tclvl } ->
-              toBytes info ++ toBytes tclvl
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
 instance BinarySerializable TcType.TcLevel where
     toBytes (TcType.TcLevel x) = toBytes x
 
@@ -510,172 +365,6 @@ instance BinarySerializable TcType.MetaInfo where
           TcType.FlatMetaTv -> 0x02 :: Word8
           TcType.FlatSkolTv -> 0x03 :: Word8
 
--- DataCon.DataCon
--- Data Constructor
--- https://hackage.haskell.org/package/ghc-8.10.2/docs/DataCon.html#g:1
-instance Hashable DataCon.DataCon where
-    typeID = const 0x00012000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        (tycovs, thet, argument_types, result_type) = DataCon.dataConSig x
-        bts = uniqueBytes tycovs -- TODO: check if necessary
-           ++ uniqueBytes thet -- TODO: check if necessary
-           ++ uniqueBytes argument_types
-           ++ uniqueBytes result_type
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
--- Class.Class
--- TypeClass
-instance Hashable Class.Class where
-    typeID = const 0x00013000
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        (_, sc_theta, sc_sels, op_stuff) = Class.classBigSig x
-        bts = uniqueBytes (Class.classTyCon x)
-           ++ uniqueBytes sc_theta
-           ++ uniqueBytes sc_sels
-           ++ uniqueBytes op_stuff -- TODO: test this stuff
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable ty => Hashable (DefMethSpec ty) where
-    typeID x = case x of
-      VanillaDM   -> 0x00014000
-      GenericDM _ -> 0x00014001
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          VanillaDM    -> []
-          GenericDM ty -> uniqueBytes ty
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable a => Hashable (CoreSyn.Bind a) where
-    typeID (CoreSyn.NonRec _ _) = 0x00015000
-    typeID (CoreSyn.Rec _)      = 0x00015001
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          CoreSyn.NonRec b e -> uniqueBytes b ++ uniqueBytes e
-          CoreSyn.Rec l -> uniqueBytes l
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable CoreSyn.AltCon where
-    typeID x = case x of
-      CoreSyn.DataAlt _ -> 0x00016000
-      CoreSyn.LitAlt _  -> 0x00016001
-      CoreSyn.DEFAULT   -> 0x00016002
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          CoreSyn.DataAlt dc -> uniqueBytes dc
-          CoreSyn.LitAlt l  -> uniqueBytes l
-          CoreSyn.DEFAULT   -> []
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-bytes_synTyConRhs x = b where
-  y = TyCon.synTyConRhs_maybe x
-  b = case y of
-    Just rhs -> uniqueBytes rhs
-    Nothing  -> []
-
--- TyCon
-instance Hashable TyCon.TyCon where
-    typeID x =
-        if TyCon.isFunTyCon x then              0x00020000
-        else if TyCon.isAlgTyCon x then         0x00020001
-        else if TyCon.isTypeSynonymTyCon x then 0x00020002
-        else if TyCon.isFamilyTyCon x then      0x00020003
-        else if TyCon.isPrimTyCon x then        0x00020004
-        else if TyCon.isPromotedDataCon x then  0x00020005
-        -- only used during typechecking
-        -- else if TyCon.isTcTyCon x then          0x00020006
-        else 0x00020006
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-
-        bndrs = uniqueBytes $ TyCon.tyConBinders x
-        result_kind = uniqueBytes $ TyCon.tyConResKind x
-        -- TyCon.tyConTyVars is a cached field of tyConBinders
-        -- TyCon.tyConArity is a cached field of length (tyConBinders)
-
-        bts =
-          if TyCon.isAlgTyCon x then
-            toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.tyConStupidTheta x)
-         ++ uniqueBytes (TyCon.algTyConRhs x)
-         -- TODO: ++ uniqueBytes TyCon.algTyConParent??
-         
-          else if TyCon.isTypeSynonymTyCon x then
-            toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.tyConStupidTheta x)
-         ++ uniqueBytesFromMaybe (TyCon.synTyConRhs_maybe x)
-
-          else if TyCon.isFamilyTyCon x then
-            toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.tyConStupidTheta x)
-         ++ uniqueBytesFromMaybe (TyCon.famTyConFlav_maybe x)
-
-          else if TyCon.isPrimTyCon x then
-            toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.isUnliftedTyCon x)
-
-          else if TyCon.isPromotedDataCon x then
-            toBytes (TyCon.tyConRoles x)
-         ++ uniqueBytes (TyCon.tyConStupidTheta x)
-         ++ uniqueBytesFromMaybe (TyCon.isPromotedDataCon_maybe x)
-          else
-        -- TODO: get bts
-            []
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
-instance Hashable TyCon.TyConBndrVis where
-    typeID (TyCon.NamedTCB _) = 0x00021000
-    typeID (TyCon.AnonTCB _)  = 0x00021001
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCon.NamedTCB y -> uniqueBytes y
-          TyCon.AnonTCB y -> uniqueBytes y
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
--- Type constructor right hand side of data
-instance Hashable TyCon.AlgTyConRhs where
-    typeID TyCon.AbstractTyCon = 0x00022000
-    typeID TyCon.DataTyCon{}   = 0x00022001
-    typeID TyCon.TupleTyCon{}  = 0x00022002
-    typeID TyCon.SumTyCon{}    = 0x00022003
-    typeID TyCon.NewTyCon{}    = 0x00022004
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCon.DataTyCon{data_cons = data_cons} -> uniqueBytes data_cons
-          TyCon.TupleTyCon{data_con = data_con, tup_sort = tup_sort} -> uniqueBytes data_con ++ toBytes tup_sort
-          TyCon.SumTyCon{data_cons = data_cons} -> uniqueBytes data_cons
-          TyCon.NewTyCon{data_con = data_con, nt_rhs = nt_rhs} -> uniqueBytes data_con ++ uniqueBytes nt_rhs
-          _ -> []
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
-
 instance BinarySerializable BasicTypes.TupleSort where
     toBytes x = toBytes b where
       b = case x of
@@ -683,21 +372,3 @@ instance BinarySerializable BasicTypes.TupleSort where
         UnboxedTuple    -> 0x01
         ConstraintTuple -> 0x02
 
-instance Hashable TyCon.FamTyConFlav where
-    typeID x = case x of
-      TyCon.DataFamilyTyCon _            -> 0x00023000
-      TyCon.OpenSynFamilyTyCon           -> 0x00023001
-      TyCon.ClosedSynFamilyTyCon _       -> 0x00023002
-      TyCon.AbstractClosedSynFamilyTyCon -> 0x00023003
-      TyCon.BuiltInSynFamTyCon _         -> 0x00023004
-
-    uniqueBytes x = bytes where
-        tb = typeID' x
-        bts = case x of
-          TyCon.DataFamilyTyCon name   -> [] --TODO: get rid of name
-          TyCon.ClosedSynFamilyTyCon m -> uniqueBytes m
-          TyCon.BuiltInSynFamTyCon b   -> [] -- TODO: uniqueBytes b
-          _ -> []
-
-        lb = toBytes (sum $ map (BS.length) bts)
-        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts

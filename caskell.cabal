@@ -13,6 +13,7 @@ executable caskell
     base >=4.14 && <4.15,
     optparse-applicative,
     ghc >=8.10,
+    ghc-prim,
     mtl,
     ghc-paths,
     bytestring,

@@ -53,21 +53,29 @@ hash_module' mod = return $ run_context $ hash_module mod
 --toStr a = return $ coreToStr a
 
 -- compileToCoreModule :: GhcMonad m => FilePath -> m CoreModule
-compile_file :: String -> IO ()
+compile_file :: String -> IO (Context)
 compile_file file = do
     let ghcCore = GHC.compileToCoreModule file
     -- let ghc = ghcCore >>= pretty_print_binds
     let ghc = ghcCore >>= hash_module'
-    let ret = run_ghc_with_libpath ghc
-    result <- ret
-    fmap (show) result -- evaluate result
-    return ()
+    r <- run_ghc_with_libpath ghc
+    r
 
+test1 :: IO ()
+test1 = do
+    result <- compile_file "tests/test1.hs"
+
+    let hashes = unique_hashes result
+
+    let a = Caskell.Context.lookup ("a"::String) hashes
+    let b = Caskell.Context.lookup ("b"::String) hashes
+    putStrLn $ show a
+    putStrLn $ show b
+    return ()
 
 run_tests :: IO ()
 run_tests = do
-    compile_file "tests/test1.hs"
-
+    test1
 
 
 

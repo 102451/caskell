@@ -1,6 +1,7 @@
 
 module Caskell.PrimOpHash
 (
+    typeID,
     uniqueBytes
 ) where
 
@@ -15,7 +16,7 @@ typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
 -- PrimOp.PrimOp
-instance Hashable PrimOp.PrimOp where
+instance TypeIDAble PrimOp.PrimOp where
     typeID x = case x of
       PrimOp.CharGtOp -> 0x00015000
       PrimOp.CharGeOp -> 0x00015001
@@ -590,6 +591,8 @@ instance Hashable PrimOp.PrimOp where
       PrimOp.PrefetchMutableByteArrayOp0 -> 0x0001523a
       PrimOp.PrefetchAddrOp0 -> 0x0001523b
       PrimOp.PrefetchValueOp0 -> 0x0001523c
+
+instance Hashable PrimOp.PrimOp where
 
     uniqueBytes x = bytes where
         tb = typeID' x
