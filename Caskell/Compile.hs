@@ -63,14 +63,13 @@ compile_file file = do
 
 test1 :: IO ()
 test1 = do
-    result <- compile_file "tests/test1.hs"
+    ctx <- compile_file "tests/test1.hs"
 
-    let hashes = unique_hashes result
-
-    let a = Caskell.Context.lookup ("a"::String) hashes
-    let b = Caskell.Context.lookup ("b"::String) hashes
+    let a = lookup_name "a" ctx
+    let e = lookup_name "e" ctx
     putStrLn $ show a
-    putStrLn $ show b
+    putStrLn $ show e
+    putStrLn $ show ctx
     return ()
 
 run_tests :: IO ()

@@ -68,28 +68,41 @@ hash_binds binds = do
     mapM (hash_bind) binds
     return ()
 
-hash_bind :: CoreSyn.CoreBind -> CtxMonad ()
+hash_bind :: CoreSyn.CoreBind -> CtxMonad (Hash)
 hash_bind cb@(CoreSyn.NonRec b expr) = do
     let name = Var.varName b
     let uniq = Name.nameUnique name
-    let hash_data = CoreBind cb
 
-    let fullname = Name.nameStableString name
-    let name_filter = any (flip (isSuffixOf) fullname) ["$main", "$trModule", "$dIP"]
+    mexpr <- mlookup_unique uniq
 
-    let sname = short_name name
+    case mexpr of
+        Just uh -> return $ hash uh  -- b exists already
+        Nothing -> do
+            let hash_data = CoreBind cb
+            let coredata = CoreData uniq hash_data True
 
-    when (not name_filter) $ do
-    
-        insert_hash $ UniqueHash uniq hash_data null_hash True
+            let fullname = Name.nameStableString name
+            let name_filter = any (flip (isSuffixOf) fullname) ["$main", "$trModule", "$dIP"]
 
-        lift $ putStr $ sname ++ " = "
-        hash <- hash_expr expr
-        lift $ putStrLn ""
+            let sname = short_name name
 
-        insert_hash $ UniqueHash uniq hash_data hash False
+            if (not name_filter) then do
+                madd_hash coredata null_hash
 
-hash_bind (CoreSyn.Rec l) = undefined
+                lift $ putStr $ sname ++ " = "
+                hash <- hash_expr expr
+                lift $ putStrLn ""
+
+                mdelete_by_unique uniq
+
+                let coredata' = coredata { hole = False }
+                madd_hash coredata' hash
+
+                return hash
+            else
+                return null_hash
+
+hash_bind (CoreSyn.Rec l) = undefined -- TODO: implement
 
 hash_expr :: CoreSyn.Expr b -> CtxMonad (Hash)
 hash_expr expr = do
@@ -101,12 +114,9 @@ hash_expr expr = do
     hob <- case expr of
     -- TODO: implement
         CoreSyn.Var var -> do
-            let t = Var.varType var
-            lift $ putStr $ "(" ++ short_name (Var.varName var) ++ ")"
-
-            -- TODO: obtain the HASH of var
-            --       search in State or 
-            return $ Bytes []
+            lift $ putStr "."
+            h <- hash_var var
+            return $ Hash h
 
         CoreSyn.Lit lit -> do
             lift $ putStr "."
@@ -144,6 +154,36 @@ hash_expr expr = do
     let hash = hash_from_hash_or_bytes tid hob
 
     return hash
+
+hash_var :: Var.Var -> CtxMonad (Hash)
+hash_var var = do
+    let tname = typeName var
+    let vname = Var.varName var
+    let uniq = Name.nameUnique vname
+
+    lift $ putStr $ tname ++ "(" ++ short_name vname ++ ")"
+
+    -- Find in already hashed values -> return hash
+    mexpr <- mlookup_unique uniq
+
+    case mexpr of
+      Just uh -> return $ hash uh
+      Nothing -> do
+      -- Find in module -> hash -> return hash
+        mmodexpr <- mlookup_unique_in_module uniq
+        
+        case mmodexpr of
+          Just bind -> do
+            h <- hash_bind bind
+
+            -- add the existing hash to the var
+            madd_hash (CoreData uniq (Var var) False) h
+            return h
+
+          Nothing -> do
+            -- TODO: Builtin -> default hash -> return hash
+            return null_hash
+
 
 hash_literal :: Literal.Literal -> CtxMonad (Hash)
 hash_literal lit = do
@@ -222,6 +262,12 @@ instance TypeIDAble Var.Var where
         | Var.isTcTyVar x = 0x00004001
         | Var.isId x      = 0x00004002
         | True            = 0x00004003
+
+    typeName x
+        | Var.isTyVar x   = "TyVar"
+        | Var.isTcTyVar x = "TcTyVar"
+        | Var.isId x      = "Id"
+        | True            = ""
 
 instance TypeIDAble (Var.VarBndr a b) where
     typeID = const 0x00004004
