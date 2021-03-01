@@ -76,7 +76,9 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
     mexpr <- mlookup_unique uniq
 
     case mexpr of
-        Just uh -> return $ hash uh  -- b exists already
+        Just uh -> do
+            lift $ putStrLn $ short_name name ++ " has been hashed already"
+            return $ hash uh  -- b exists already
         Nothing -> do
             let hash_data = CoreBind cb
             let coredata = CoreData uniq hash_data True
@@ -112,7 +114,6 @@ hash_expr expr = do
     lift $ putStr tname
 
     hob <- case expr of
-    -- TODO: implement
         CoreSyn.Var var -> do
             lift $ putStr "."
             h <- hash_var var
@@ -131,21 +132,27 @@ hash_expr expr = do
             lift $ putStr ")"
             return $ Bytes $ toBytes b1 ++ toBytes b2
 
+    -- TODO: implement
         CoreSyn.Lam b e -> do
             return $ Bytes []
 
+    -- TODO: implement
         CoreSyn.Let b e -> do
             return $ Bytes []
 
+    -- TODO: implement
         CoreSyn.Case e b t alts -> do
             return $ Bytes []
 
+    -- TODO: implement
         CoreSyn.Cast e coer -> do
             return $ Bytes []
 
+    -- TODO: implement
         CoreSyn.Type t -> do
             return $ Bytes []
 
+    -- TODO: implement
         CoreSyn.Coercion coer -> do
             return $ Bytes []
 
@@ -175,7 +182,6 @@ hash_var var = do
         case mmodexpr of
           Just bind -> do
             h <- hash_bind bind
-
             -- add the existing hash to the var
             madd_hash (CoreData uniq (Var var) False) h
             return h
@@ -194,7 +200,25 @@ hash_literal lit = do
 
     hob <- case lit of
         Literal.LitChar c -> do
-            return $ Bytes []
+            lift $ putStr $ "(" ++ c : ")"
+            return $ Bytes $ uniqueBytes c
+
+        -- TODO: number type maybe
+        Literal.LitNumber lnt i t -> do
+            lift $ putStr $ "(" ++ show i ++ ")"
+            return $ Bytes $ toBytes lnt ++ uniqueBytes i
+
+        Literal.LitString s -> do
+            lift $ putStr $ "(" ++ show s ++ ")"
+            return $ Bytes $ uniqueBytes s
+
+        Literal.LitFloat r -> do
+            lift $ putStr $ "(" ++ show r ++ ")"
+            return $ Bytes $ uniqueBytes r
+
+        Literal.LitDouble r -> do
+            lift $ putStr $ "(" ++ show r ++ ")"
+            return $ Bytes $ uniqueBytes r
         _ -> do
             return $ Bytes []
 

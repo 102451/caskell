@@ -63,18 +63,37 @@ compile_file file = do
 
 test1 :: IO ()
 test1 = do
+    putStrLn "\n================="
+    putStrLn "TEST 1"
+    putStrLn "================="
     ctx <- compile_file "tests/test1.hs"
 
-    let a = lookup_name "a" ctx
-    let e = lookup_name "e" ctx
-    putStrLn $ show a
-    putStrLn $ show e
     putStrLn $ show ctx
+    return ()
+
+test2 :: IO ()
+test2 = do
+    putStrLn "\n================="
+    putStrLn "TEST 2"
+    putStrLn "================="
+    ctx <- compile_file "tests/test2.hs"
+
+    putStrLn $ show $ lookup_name "int5" ctx
+    putStrLn $ show $ lookup_name "int3" ctx
+    putStrLn $ show $ lookup_name "float3'14" ctx
+    putStrLn $ show $ lookup_name "float2'71" ctx
+    putStrLn $ show $ lookup_name "double3'14" ctx
+    putStrLn $ show $ lookup_name "double2'71" ctx
+    putStrLn $ show $ lookup_name "charA" ctx
+    putStrLn $ show $ lookup_name "charB" ctx
+    putStrLn $ show $ lookup_name "stringHello" ctx
+    putStrLn $ show $ lookup_name "stringWorld" ctx
     return ()
 
 run_tests :: IO ()
 run_tests = do
     test1
+    test2
 
 
 

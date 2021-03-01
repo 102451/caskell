@@ -1,3 +1,9 @@
+-- test 1: number literal and var (reference) hash test
+-- given a number literal 'a' = x
+--   and a number literal 'b' = x
+--   and a reference 'c' = 'a'
+--
+-- hash of a = hash of b = hash of c
 
 -- Int = I# Int#
 -- Int# = Primitive
