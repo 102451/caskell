@@ -7,6 +7,7 @@ module Caskell.Context
     Context(..),
     UniqueHash(..),
     CoreData(..),
+    name,
     HashedData(..),
     UniqueHashMap,
     CtxMonad,
@@ -18,6 +19,8 @@ module Caskell.Context
     set_hashes,
     get_mod_guts,
     set_mod_guts,
+    is_debug,
+    set_debug,
 
     get,
     put,
@@ -42,7 +45,13 @@ module Caskell.Context
     short_name,
     short_hash_data_name,
     short_hash_str,
-    short_unique_hash_str
+    short_unique_hash_str,
+
+    -- utility
+    Caskell.Context.print,
+    Caskell.Context.println,
+    dprint,
+    dprintln
 ) where
 
 import qualified Unique
@@ -59,9 +68,12 @@ import Data.Maybe
 import Caskell.Bytes
 import Caskell.Hash
 
+default_print = True
+
 data Context = Ctx
     { unique_hashes :: UniqueHashMap
     , mod_guts :: GHC.CoreModule
+    , debug :: Bool
     }
 
 instance Show Context where
@@ -69,7 +81,8 @@ instance Show Context where
 
 mkCtx = Ctx {
 unique_hashes = empty,
-mod_guts = undefined
+mod_guts = undefined,
+debug = default_print
 }
 
 empty_context = mkCtx
@@ -145,13 +158,19 @@ get_hashes :: CtxMonad UniqueHashMap
 get_hashes = state $ \ctx -> (unique_hashes ctx, ctx)
 
 set_hashes :: UniqueHashMap -> CtxMonad ()
-set_hashes hs = state $ \ctx -> ((), ctx { unique_hashes = hs})
+set_hashes hs = state $ \ctx -> ((), ctx { unique_hashes = hs })
 
 get_mod_guts :: CtxMonad GHC.CoreModule
 get_mod_guts = state $ \ctx -> (mod_guts ctx, ctx)
 
 set_mod_guts :: GHC.CoreModule -> CtxMonad ()
-set_mod_guts guts = state $ \ctx -> ((), ctx { mod_guts = guts})
+set_mod_guts guts = state $ \ctx -> ((), ctx { mod_guts = guts })
+
+is_debug :: CtxMonad Bool
+is_debug = state $ \ctx -> (debug ctx, ctx)
+
+set_debug :: Bool -> CtxMonad ()
+set_debug dbg = state $ \ctx -> ((), ctx { debug = dbg })
 
 -- other methods
 lookup_name :: String -> Context -> Maybe UniqueHash
@@ -263,3 +282,20 @@ mdelete_by_unique u = do
                             Data.Map.MultiKey.insert uq hashes
         
     set_hashes newhashes
+
+-- utility
+print :: String -> CtxMonad ()
+print = lift . putStr
+
+println :: String -> CtxMonad ()
+println = lift . putStrLn
+
+dprint :: String -> CtxMonad ()
+dprint s = do
+    dbg <- is_debug
+    when dbg (Caskell.Context.print s)
+
+dprintln :: String -> CtxMonad ()
+dprintln s = do
+    dbg <- is_debug
+    when dbg (Caskell.Context.println s)

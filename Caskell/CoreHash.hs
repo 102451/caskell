@@ -24,8 +24,10 @@ import qualified TcType
 import qualified PrimOp
 import qualified DataCon
 import qualified Class
+import qualified HscTypes
+import qualified NameEnv
 import BasicTypes
-import Outputable (Outputable, showPpr)
+import Outputable (Outputable, showPpr, ppr, showSDocUnsafe)
 
 import DynFlags
 import TyCon
@@ -58,11 +60,77 @@ null_hash = get_hash ([]::[Int])
 typeID' :: Hashable a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
-hash_module guts@(GHC.CoreModule _ _ binds _) = do
+hash_module guts@(GHC.CoreModule _ types binds _) = do
     set_mod_guts guts
+    hash_types types
     hash_binds binds
 
+-- types
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/HscTypes.html#TypeEnv
+hash_types :: HscTypes.TypeEnv -> CtxMonad ()
+hash_types tenv = do
+    mapM (hash_type_tything) $ HscTypes.typeEnvElts tenv
+    return ()
+
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#TyThing
+hash_type_tything :: TyCoRep.TyThing -> CtxMonad (Maybe Hash)
+hash_type_tything (TyCoRep.AnId _) = return Nothing -- not a type
+hash_type_tything (TyCoRep.AConLike _) = return Nothing -- data constructor, we want TYPES
+hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- TODO: newtype
+hash_type_tything (TyCoRep.ATyCon tc) = do
+    ret <- hash_tyCon tc
+    dprintln ""
+    return $ Just ret
+
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#TyCon
+hash_tyCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_tyCon tc = do
+    let name = TyCon.tyConName tc
+    let sname = short_name name
+    dprint $ typeName tc ++ "(" ++ sname
+    
+    let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
+             | TyCon.isAlgTyCon tc = hash_algTyCon tc
+             | TyCon.isPrimTyCon tc = hash_primTyCon tc
+             -- TODO: implement the rest
+             | TyCon.isTypeSynonymTyCon tc = return null_hash
+             | TyCon.isFamilyTyCon tc = return null_hash
+             | TyCon.isPromotedDataCon tc = return null_hash
+             -- TyCon.TcTyCon
+             | True = return null_hash
+
+    ret <- ret'
+
+    dprint ")"
+
+    return ret
+
+hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_funTyCon tc = do
+    return null_hash
+
+hash_algTyCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_algTyCon tc = do
+    -- TODO: stupid theta (the things on the left side, e.g. data Eq a => T a
+    let mdcs = TyCon.tyConDataCons_maybe tc
+
+    case mdcs of
+      Nothing -> return ()
+      Just dcs -> do
+        dprint "<"
+        dprint $ intercalate "," $ map (showSDocUnsafe . ppr) dcs
+        dprint ">"
+        -- TODO: finish data constructors
+        
+    return null_hash
+
+hash_primTyCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_primTyCon tc = do
+    return null_hash
+
+-- normal expressions
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
     mapM (hash_bind) binds
@@ -77,13 +145,16 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
 
     case mexpr of
         Just uh -> do
-            lift $ putStrLn $ short_name name ++ " has been hashed already"
+            dprintln $ short_name name ++ " has been hashed already"
             return $ hash uh  -- b exists already
         Nothing -> do
             let hash_data = CoreBind cb
             let coredata = CoreData uniq hash_data True
 
             let fullname = Name.nameStableString name
+
+            -- we skip these for now
+            -- TODO: dont skip them
             let name_filter = any (flip (isSuffixOf) fullname) ["$main", "$trModule", "$dIP"]
 
             let sname = short_name name
@@ -91,9 +162,9 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
             if (not name_filter) then do
                 madd_hash coredata null_hash
 
-                lift $ putStr $ sname ++ " = "
+                dprint $ sname ++ " = "
                 hash <- hash_expr expr
-                lift $ putStrLn ""
+                dprintln ""
 
                 mdelete_by_unique uniq
 
@@ -111,25 +182,25 @@ hash_expr expr = do
     let tid = typeID expr
     let tname = typeName expr
 
-    lift $ putStr tname
+    dprint tname
 
     hob <- case expr of
         CoreSyn.Var var -> do
-            lift $ putStr "."
+            dprint "."
             h <- hash_var var
             return $ Hash h
 
         CoreSyn.Lit lit -> do
-            lift $ putStr "."
+            dprint "."
             h <- hash_literal lit
             return $ Hash h
 
         CoreSyn.App e1 e2 -> do
-            lift $ putStr "("
+            dprint "("
             b1 <- hash_expr e1
-            lift $ putStr ", "
+            dprint ", "
             b2 <- hash_expr e2
-            lift $ putStr ")"
+            dprint ")"
             return $ Bytes $ toBytes b1 ++ toBytes b2
 
     -- TODO: implement
@@ -168,7 +239,7 @@ hash_var var = do
     let vname = Var.varName var
     let uniq = Name.nameUnique vname
 
-    lift $ putStr $ tname ++ "(" ++ short_name vname ++ ")"
+    dprint $ tname ++ "(" ++ short_name vname ++ ")"
 
     -- Find in already hashed values -> return hash
     mexpr <- mlookup_unique uniq
@@ -196,28 +267,28 @@ hash_literal lit = do
     let tid = typeID lit
     let tname = typeName lit
 
-    lift $ putStr tname
+    dprint tname
 
     hob <- case lit of
         Literal.LitChar c -> do
-            lift $ putStr $ "(" ++ c : ")"
+            dprint $ "(" ++ c : ")"
             return $ Bytes $ uniqueBytes c
 
         -- TODO: number type maybe
         Literal.LitNumber lnt i t -> do
-            lift $ putStr $ "(" ++ show i ++ ")"
+            dprint $ "(" ++ show i ++ ")"
             return $ Bytes $ toBytes lnt ++ uniqueBytes i
 
         Literal.LitString s -> do
-            lift $ putStr $ "(" ++ show s ++ ")"
+            dprint $ "(" ++ show s ++ ")"
             return $ Bytes $ uniqueBytes s
 
         Literal.LitFloat r -> do
-            lift $ putStr $ "(" ++ show r ++ ")"
+            dprint $ "(" ++ show r ++ ")"
             return $ Bytes $ uniqueBytes r
 
         Literal.LitDouble r -> do
-            lift $ putStr $ "(" ++ show r ++ ")"
+            dprint $ "(" ++ show r ++ ")"
             return $ Bytes $ uniqueBytes r
         _ -> do
             return $ Bytes []
@@ -407,16 +478,28 @@ instance TypeIDAble CoreSyn.AltCon where
 
 -- TyCon
 instance TypeIDAble TyCon.TyCon where
-    typeID x =
-        if TyCon.isFunTyCon x then              0x00020000
-        else if TyCon.isAlgTyCon x then         0x00020001
-        else if TyCon.isTypeSynonymTyCon x then 0x00020002
-        else if TyCon.isFamilyTyCon x then      0x00020003
-        else if TyCon.isPrimTyCon x then        0x00020004
-        else if TyCon.isPromotedDataCon x then  0x00020005
+    typeID x
+        | TyCon.isFunTyCon x =         0x00020000
+        | TyCon.isAlgTyCon x =         0x00020001
+        | TyCon.isTypeSynonymTyCon x = 0x00020002
+        | TyCon.isFamilyTyCon x =      0x00020003
+        | TyCon.isPrimTyCon x =        0x00020004
+        | TyCon.isPromotedDataCon x =  0x00020005
         -- only used during typechecking
-        -- else if TyCon.isTcTyCon x then          0x00020006
-        else 0x00020006
+        -- | TyCon.isTcTyCon x =          0x00020006
+        | True = 0x00020006
+
+    typeName x
+        | TyCon.isFunTyCon x =         "FunTyCon"
+        | TyCon.isAlgTyCon x =         "AlgTyCon"
+        | TyCon.isTypeSynonymTyCon x = "TypeSynonymTyCon"
+        | TyCon.isFamilyTyCon x =      "FamilyTyCon"
+        | TyCon.isPrimTyCon x =        "PrimTyCon"
+        | TyCon.isPromotedDataCon x =  "PromotedDataCon"
+        -- only used during typechecking
+        -- | TyCon.isTcTyCon x =          0x00020006
+        | True = "Other TyCon"
+
 
 instance TypeIDAble TyCon.TyConBndrVis where
     typeID (TyCon.NamedTCB _) = 0x00021000
@@ -429,6 +512,12 @@ instance TypeIDAble TyCon.AlgTyConRhs where
     typeID TyCon.TupleTyCon{}  = 0x00022002
     typeID TyCon.SumTyCon{}    = 0x00022003
     typeID TyCon.NewTyCon{}    = 0x00022004
+
+    typeName TyCon.AbstractTyCon = "AbstractTyCon"
+    typeName TyCon.DataTyCon{}   = "DataTyCon"
+    typeName TyCon.TupleTyCon{}  = "TupleTyCon"
+    typeName TyCon.SumTyCon{}    = "SumTyCon"
+    typeName TyCon.NewTyCon{}    = "NewTyCon"
 
 instance TypeIDAble TyCon.FamTyConFlav where
     typeID x = case x of
