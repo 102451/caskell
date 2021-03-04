@@ -21,6 +21,7 @@ executable caskell
     binary,
     memory,
     array,
+    sort,
     split,
     containers
 

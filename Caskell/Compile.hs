@@ -103,7 +103,9 @@ test3 = do
     putStrLn "================="
     ctx <- compile_file "tests/test3.hs"
 
-    putStrLn $ show ctx
+    putStrLn $ show $ lookup_name "T1" ctx
+    putStrLn $ show $ lookup_name "T2" ctx
+    putStrLn $ show $ lookup_name "T3" ctx
     {-|
     let g = mod_guts ctx
     let ts = GHC.cm_types g

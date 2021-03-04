@@ -27,7 +27,7 @@ import qualified Class
 import qualified HscTypes
 import qualified NameEnv
 import BasicTypes
-import Outputable (Outputable, showPpr, ppr, showSDocUnsafe)
+import Outputable (Outputable, ppr, showSDocUnsafe)
 
 import DynFlags
 import TyCon
@@ -39,6 +39,7 @@ import Control.Monad.State
 import Data.List
 import Data.Functor
 import Data.Coerce
+import Data.Sort
 import Data.Typeable
 import Data.Word
 import FastString
@@ -54,6 +55,9 @@ data HashOrBytes = Hash Hash | Bytes Bytes
 hash_from_hash_or_bytes :: TypeID -> HashOrBytes -> Hash
 hash_from_hash_or_bytes tid (Bytes bytes) = get_hash $ manual_unique_bytes tid bytes
 hash_from_hash_or_bytes _ (Hash h) = h
+
+showPpr' :: Outputable a => a -> String
+showPpr' = showSDocUnsafe . ppr
 
 null_hash = get_hash ([]::[Int])
 
@@ -88,8 +92,19 @@ hash_type_tything (TyCoRep.ATyCon tc) = do
 hash_tyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_tyCon tc = do
     let name = TyCon.tyConName tc
+    let uniq = TyCon.tyConUnique tc
     let sname = short_name name
-    dprint $ typeName tc ++ "(" ++ sname
+    let tcid = typeID tc
+
+    -- TODO: check if tycon isnt already hashed
+    --       see expr for help
+    let hash_data = TyCon tc
+    let coredata = CoreData uniq hash_data True
+
+    madd_hash coredata null_hash
+
+    -- TODO: type parameters, probably have to propagate them since theyre part of the type
+    dprint $ typeName tc ++ " " ++ sname ++ " = "
     
     let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
              | TyCon.isAlgTyCon tc = hash_algTyCon tc
@@ -103,31 +118,73 @@ hash_tyCon tc = do
 
     ret <- ret'
 
-    dprint ")"
+
+    mdelete_by_unique uniq
+    let coredata' = coredata { hole = False }
+    madd_hash coredata' ret
 
     return ret
 
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_funTyCon tc = do
     return null_hash
 
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#AlgTyCon
 hash_algTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_algTyCon tc = do
     -- TODO: stupid theta (the things on the left side, e.g. data Eq a => T a
-    let mdcs = TyCon.tyConDataCons_maybe tc
+    -- TODO: type variables
+    let rhs = TyCon.algTyConRhs tc
+    let rhsid = typeID rhs
 
-    case mdcs of
-      Nothing -> return ()
-      Just dcs -> do
-        dprint "<"
-        dprint $ intercalate "," $ map (showSDocUnsafe . ppr) dcs
-        dprint ">"
-        -- TODO: finish data constructors
-        
-    return null_hash
+    dprint $ typeName rhs
 
+    rhs_bts <- case rhs of
+      TyCon.AbstractTyCon -> return []
+      TyCon.DataTyCon dcs _ _ -> do
+        args_hash <- hash_dataCons_args dcs
+        -- TODO: temporary, hash data constructors again with this hash
+        return $ toBytes args_hash
+
+      TyCon.TupleTyCon dc sort -> return $ toBytes sort -- TODO
+      TyCon.SumTyCon dcs _ -> return [] -- TODO
+      TyCon.NewTyCon dc t _ _ _ -> return [] -- TODO
+
+    let bts = toBytes rhsid ++ rhs_bts
+    return $ get_hash bts
+
+-- this gets the type, order and number of data constructor arguments
+-- for each data constructor in the Data type and uniquely hashes them
+hash_dataCons_args :: [DataCon.DataCon] -> CtxMonad (Hash)
+hash_dataCons_args dcs = do
+    let hash_dataCon_args dc = do
+            let dc_name = short_name $ DataCon.dataConName dc
+            let args = DataCon.dataConOrigArgTys dc
+            -- TODO: data con type variables (THEY CAN BE DIFFERENT FROM TYCON TYVARS?)
+            --let dcuniv = DataCon.dataConUnivTyVars dc
+            --dprint $ "<" ++ dc_name ++ showPpr' dcuniv ++ "(" ++ showPpr' args ++ ")>"
+            dprint $ "<" ++ dc_name ++ "(" ++ showPpr' args ++ ")>"
+
+            args_hashes <- mapM hash_type args
+            let args_bytes = map (toBytes) args_hashes
+
+            return $ get_hash args_bytes
+
+    dc_hashes <- mapM hash_dataCon_args dcs
+    let dc_bytes = map (toBytes) dc_hashes
+    return $ get_hash dc_bytes
+
+
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#PrimTyCon
 hash_primTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_primTyCon tc = do
+    -- TODO: implement
+    return null_hash
+
+hash_type :: TyCoRep.Type -> CtxMonad (Hash)
+hash_type t = do
+    -- TODO: implement
     return null_hash
 
 -- normal expressions
@@ -504,6 +561,8 @@ instance TypeIDAble TyCon.TyCon where
 instance TypeIDAble TyCon.TyConBndrVis where
     typeID (TyCon.NamedTCB _) = 0x00021000
     typeID (TyCon.AnonTCB _)  = 0x00021001
+    typeName (TyCon.NamedTCB _) = "Named"
+    typeName (TyCon.AnonTCB _)  = "Anon"
 
 -- Type constructor right hand side of data
 instance TypeIDAble TyCon.AlgTyConRhs where
@@ -526,6 +585,13 @@ instance TypeIDAble TyCon.FamTyConFlav where
       TyCon.ClosedSynFamilyTyCon _       -> 0x00023002
       TyCon.AbstractClosedSynFamilyTyCon -> 0x00023003
       TyCon.BuiltInSynFamTyCon _         -> 0x00023004
+
+instance TypeIDAble TyCon.AlgTyConFlav where
+    typeID x = case x of
+      TyCon.VanillaAlgTyCon _      -> 0x00024000
+      TyCon.UnboxedAlgTyCon _      -> 0x00024001
+      TyCon.ClassTyCon _ _         -> 0x00024002
+      TyCon.DataFamInstTyCon _ _ _ -> 0x00024003
 
 -- =========================
 -- Binary Serializable stuff
