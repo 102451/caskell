@@ -22,4 +22,4 @@ e :: Integer
 e = 5
 
 main :: IO ()
-main = undefined
+main = return ()

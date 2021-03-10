@@ -1,6 +1,10 @@
 import Options.Applicative
 import Data.Semigroup ((<>))
 
+import Caskell.Bytes
+import Caskell.Tests
+import Caskell.Hash
+import Caskell.CoreHash
 import Caskell.Compile
 
 data Arguments = Arguments

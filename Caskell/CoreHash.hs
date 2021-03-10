@@ -162,10 +162,12 @@ hash_dataCons_args dcs = do
             let dc_name = short_name $ DataCon.dataConName dc
             let args = DataCon.dataConOrigArgTys dc
             -- TODO: data con type variables (THEY CAN BE DIFFERENT FROM TYCON TYVARS?)
-            --let dcuniv = DataCon.dataConUnivTyVars dc
+            let dcuniv = DataCon.dataConUnivTyVars dc
             --dprint $ "<" ++ dc_name ++ showPpr' dcuniv ++ "(" ++ showPpr' args ++ ")>"
             dprint $ "<" ++ dc_name ++ "(" ++ showPpr' args ++ ")>"
 
+            tyvar_hashes <- mapM hash_var dcuniv
+            dprintln $ concatMap show tyvar_hashes
             args_hashes <- mapM hash_type args
             let args_bytes = map (toBytes) args_hashes
 
@@ -316,6 +318,9 @@ hash_var var = do
 
           Nothing -> do
             -- TODO: Builtin -> default hash -> return hash
+            dprint "[var not found]"
+            when (Var.isId var) $ do
+                dprint $ showPpr' var
             return null_hash
 
 
