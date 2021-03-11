@@ -26,12 +26,12 @@ import qualified DataCon
 import qualified Class
 import qualified HscTypes
 import qualified NameEnv
+import qualified TyCoRep
 import BasicTypes
 import Outputable (Outputable, ppr, showSDocUnsafe)
 
 import DynFlags
 import TyCon
-import TyCoRep
 import CoAxiom
 
 import Control.Monad
@@ -50,19 +50,10 @@ import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
 
-data HashOrBytes = Hash Hash | Bytes Bytes
-
-hash_from_hash_or_bytes :: TypeID -> HashOrBytes -> Hash
-hash_from_hash_or_bytes tid (Bytes bytes) = get_hash $ manual_unique_bytes tid bytes
-hash_from_hash_or_bytes _ (Hash h) = h
-
 showPpr' :: Outputable a => a -> String
 showPpr' = showSDocUnsafe . ppr
 
 null_hash = get_hash ([]::[Int])
-
-typeID' :: Hashable a => a -> [BS.ByteString]
-typeID' = toBytes . typeID 
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
@@ -162,32 +153,62 @@ hash_dataCons_args dcs = do
             let dc_name = short_name $ DataCon.dataConName dc
             let args = DataCon.dataConOrigArgTys dc
             -- TODO: data con type variables (THEY CAN BE DIFFERENT FROM TYCON TYVARS?)
-            let dcuniv = DataCon.dataConUnivTyVars dc
+            --let dcuniv = DataCon.dataConUnivTyVars dc
             --dprint $ "<" ++ dc_name ++ showPpr' dcuniv ++ "(" ++ showPpr' args ++ ")>"
-            dprint $ "<" ++ dc_name ++ "(" ++ showPpr' args ++ ")>"
+            dprint $ "<" ++ dc_name ++ "("
 
-            tyvar_hashes <- mapM hash_var dcuniv
-            dprintln $ concatMap show tyvar_hashes
+            --tyvar_hashes <- mapM hash_var dcuniv
+            -- dprintln $ concatMap show tyvar_hashes
             args_hashes <- mapM hash_type args
+
+            dprint ")>"
             let args_bytes = map (toBytes) args_hashes
 
             return $ get_hash args_bytes
 
     dc_hashes <- mapM hash_dataCon_args dcs
-    let dc_bytes = map (toBytes) dc_hashes
+    -- we sort to get stable and order independent hashes for type constructors
+    let dc_bytes = sort $ map (toBytes) dc_hashes
     return $ get_hash dc_bytes
 
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#PrimTyCon
 hash_primTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_primTyCon tc = do
-    -- TODO: implement
-    return null_hash
+    -- prim tycons are, well, primitives.
+    -- just hash them directly
+
+    let tcname = TyCon.tyConName tc
+
+    return $ get_hash $ Name.nameStableString tcname
 
 hash_type :: TyCoRep.Type -> CtxMonad (Hash)
 hash_type t = do
-    -- TODO: implement
-    return null_hash
+    let tid = typeID t
+    let tname = typeName t
+    dprint $ tname ++ "("
+
+    hob <- case t of
+        TyCoRep.TyVarTy var -> do
+            vhash <- hash_var var
+            return $ H vhash
+            -- TODO: finish the rest
+        TyCoRep.AppTy t1 t2 -> return $ B tid []
+        TyCoRep.TyConApp tc ts -> do
+            tchash <- hash_tyCon tc
+            dprint "["
+            typehashes <- mapM (hash_type) ts
+            dprint "]"
+            return $ B tid $ toBytes tchash ++ concatMap (toBytes) typehashes
+        TyCoRep.ForAllTy _ _ -> return $ B tid []
+        TyCoRep.FunTy{} -> return $ B tid []
+        TyCoRep.LitTy _ -> return $ B tid []
+        TyCoRep.CastTy _ _ -> return $ B tid []
+        TyCoRep.CoercionTy _ -> return $ B tid []
+
+    dprint ")"
+
+    return $ get_hash hob
 
 -- normal expressions
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
@@ -247,12 +268,12 @@ hash_expr expr = do
         CoreSyn.Var var -> do
             dprint "."
             h <- hash_var var
-            return $ Hash h
+            return $ H h
 
         CoreSyn.Lit lit -> do
             dprint "."
             h <- hash_literal lit
-            return $ Hash h
+            return $ H h
 
         CoreSyn.App e1 e2 -> do
             dprint "("
@@ -260,35 +281,35 @@ hash_expr expr = do
             dprint ", "
             b2 <- hash_expr e2
             dprint ")"
-            return $ Bytes $ toBytes b1 ++ toBytes b2
+            return $ B tid $ toBytes b1 ++ toBytes b2
 
     -- TODO: implement
         CoreSyn.Lam b e -> do
-            return $ Bytes []
+            return $ B tid []
 
     -- TODO: implement
         CoreSyn.Let b e -> do
-            return $ Bytes []
+            return $ B tid []
 
     -- TODO: implement
         CoreSyn.Case e b t alts -> do
-            return $ Bytes []
+            return $ B tid []
 
     -- TODO: implement
         CoreSyn.Cast e coer -> do
-            return $ Bytes []
+            return $ B tid []
 
     -- TODO: implement
         CoreSyn.Type t -> do
-            return $ Bytes []
+            return $ B tid []
 
     -- TODO: implement
         CoreSyn.Coercion coer -> do
-            return $ Bytes []
+            return $ B tid []
 
-        _ -> return $ Bytes []
+        _ -> return $ B tid []
 
-    let hash = hash_from_hash_or_bytes tid hob
+    let hash = get_hash hob
 
     return hash
 
@@ -319,8 +340,8 @@ hash_var var = do
           Nothing -> do
             -- TODO: Builtin -> default hash -> return hash
             dprint "[var not found]"
-            when (Var.isId var) $ do
-                dprint $ showPpr' var
+            --when (Var.isId var) $ do
+              --  dprint $ showPpr' var
             return null_hash
 
 
@@ -334,28 +355,28 @@ hash_literal lit = do
     hob <- case lit of
         Literal.LitChar c -> do
             dprint $ "(" ++ c : ")"
-            return $ Bytes $ uniqueBytes c
+            return $ B tid $ uniqueBytes c
 
         -- TODO: number type maybe
         Literal.LitNumber lnt i t -> do
             dprint $ "(" ++ show i ++ ")"
-            return $ Bytes $ toBytes lnt ++ uniqueBytes i
+            return $ B tid $ toBytes lnt ++ uniqueBytes i
 
         Literal.LitString s -> do
             dprint $ "(" ++ show s ++ ")"
-            return $ Bytes $ uniqueBytes s
+            return $ B tid $ uniqueBytes s
 
         Literal.LitFloat r -> do
             dprint $ "(" ++ show r ++ ")"
-            return $ Bytes $ uniqueBytes r
+            return $ B tid $ uniqueBytes r
 
         Literal.LitDouble r -> do
             dprint $ "(" ++ show r ++ ")"
-            return $ Bytes $ uniqueBytes r
+            return $ B tid $ uniqueBytes r
         _ -> do
-            return $ Bytes []
+            return $ B tid []
 
-    let hash = hash_from_hash_or_bytes tid hob
+    let hash = get_hash hob
 
     return hash
 
@@ -403,15 +424,24 @@ instance TypeIDAble Literal.Literal where
     typeName (Literal.LitDouble _)        = "LitDouble"
     typeName (Literal.LitLabel _ _ _)     = "LitLabel"
 
-instance TypeIDAble Type where
-    typeID (TyVarTy _)    = 0x00003000
-    typeID (AppTy _ _)    = 0x00003001
-    typeID (TyConApp _ _) = 0x00003002
-    typeID (ForAllTy _ _) = 0x00003003
-    typeID (FunTy{})      = 0x00003004
-    typeID (LitTy _)      = 0x00003005
-    typeID (CastTy _ _)   = 0x00003006
-    typeID (CoercionTy _) = 0x00003007
+instance TypeIDAble TyCoRep.Type where
+    typeID (TyCoRep.TyVarTy _)    = 0x00003000
+    typeID (TyCoRep.AppTy _ _)    = 0x00003001
+    typeID (TyCoRep.TyConApp _ _) = 0x00003002
+    typeID (TyCoRep.ForAllTy _ _) = 0x00003003
+    typeID (TyCoRep.FunTy{})      = 0x00003004
+    typeID (TyCoRep.LitTy _)      = 0x00003005
+    typeID (TyCoRep.CastTy _ _)   = 0x00003006
+    typeID (TyCoRep.CoercionTy _) = 0x00003007
+
+    typeName (TyCoRep.TyVarTy _)    = "TyVarTy"
+    typeName (TyCoRep.AppTy _ _)    = "AppTy"
+    typeName (TyCoRep.TyConApp _ _) = "TyConApp"
+    typeName (TyCoRep.ForAllTy _ _) = "ForAllTy"
+    typeName (TyCoRep.FunTy{})      = "FunTy"
+    typeName (TyCoRep.LitTy _)      = "LitTy"
+    typeName (TyCoRep.CastTy _ _)   = "CastTy"
+    typeName (TyCoRep.CoercionTy _) = "CoercionTy"
 
 instance TypeIDAble Var.Var where
     typeID x
@@ -429,11 +459,11 @@ instance TypeIDAble Var.Var where
 instance TypeIDAble (Var.VarBndr a b) where
     typeID = const 0x00004004
 
-instance TypeIDAble TyLit where
-    typeID (NumTyLit _) = 0x00005000
-    typeID (StrTyLit _) = 0x00005001
+instance TypeIDAble TyCoRep.TyLit where
+    typeID (TyCoRep.NumTyLit _) = 0x00005000
+    typeID (TyCoRep.StrTyLit _) = 0x00005001
 
-instance TypeIDAble Coercion where
+instance TypeIDAble TyCoRep.Coercion where
     typeID x = case x of
       TyCoRep.Refl _            -> 0x00006000
       TyCoRep.GRefl _ _ _       -> 0x00006001
@@ -454,7 +484,7 @@ instance TypeIDAble Coercion where
       TyCoRep.SubCo _           -> 0x00006010
       TyCoRep.HoleCo _          -> 0x00006011
 
-instance TypeIDAble MCoercion where
+instance TypeIDAble TyCoRep.MCoercion where
     typeID x = case x of
       TyCoRep.MRefl -> 0x00007000
       TyCoRep.MCo _ -> 0x00007001
@@ -613,10 +643,10 @@ instance BinarySerializable BasicTypes.FunctionOrData where
     toBytes BasicTypes.IsFunction = toBytes (0x00 :: Word8)
     toBytes BasicTypes.IsData     = toBytes (0x01 :: Word8)
 
-instance BinarySerializable ArgFlag where
-    toBytes Inferred  = toBytes (0x00 :: Word8)
-    toBytes Specified = toBytes (0x01 :: Word8)
-    toBytes Required  = toBytes (0x02 :: Word8)
+instance BinarySerializable TyCoRep.ArgFlag where
+    toBytes TyCoRep.Inferred  = toBytes (0x00 :: Word8)
+    toBytes TyCoRep.Specified = toBytes (0x01 :: Word8)
+    toBytes TyCoRep.Required  = toBytes (0x02 :: Word8)
 
 instance BinarySerializable Var.AnonArgFlag where
     toBytes Var.VisArg   = toBytes (0x00 :: Word8)

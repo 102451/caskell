@@ -102,13 +102,20 @@ test3 = do
     ctx <- init_test 3 "simple data types"
     let get_hashed_expr = flip (get_hashed_expr') ctx
 
+    let t4 = get_hashed_expr "T4"
+    let t5 = get_hashed_expr "T5"
+    let t6 = get_hashed_expr "T6"
+    putStrLn $ show t4
+    putStrLn $ show t5
+    putStrLn $ show t6
+{-
     let t1 = get_hashed_expr "T1"
     let t2 = get_hashed_expr "T2"
     let t3 = get_hashed_expr "T3"
 
     assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
     assertNotEqual "hash T1 /= hash T3" (hash t1) (hash t3)
-
+-}
     {-|
     let g = mod_guts ctx
     let ts = GHC.cm_types g

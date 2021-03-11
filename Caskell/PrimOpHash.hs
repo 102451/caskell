@@ -12,7 +12,7 @@ import Caskell.Hash
 import qualified PrimOp
 import qualified CmmType
 
-typeID' :: Hashable a => a -> [BS.ByteString]
+typeID' :: TypeIDAble a => a -> [BS.ByteString]
 typeID' = toBytes . typeID 
 
 -- PrimOp.PrimOp
@@ -592,8 +592,7 @@ instance TypeIDAble PrimOp.PrimOp where
       PrimOp.PrefetchAddrOp0 -> 0x0001523b
       PrimOp.PrefetchValueOp0 -> 0x0001523c
 
-instance Hashable PrimOp.PrimOp where
-
+instance UniquelySerializable PrimOp.PrimOp where
     uniqueBytes x = bytes where
         tb = typeID' x
         bts = case x of
