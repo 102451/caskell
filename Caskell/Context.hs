@@ -59,6 +59,7 @@ import qualified Name
 import qualified CoreSyn
 import qualified Var
 import qualified TyCon
+import qualified DataCon
 import qualified GHC
 import Control.Monad.State
 
@@ -105,6 +106,7 @@ data CoreData = CoreData
 data HashedData = CoreBind CoreSyn.CoreBind -- direct expression
                 | Var Var.Var -- typed reference to expression
                 | TyCon TyCon.TyCon -- type constructor (basically: a data type)
+                | DataCon DataCon.DataCon -- data constructor
     
 name :: HashedData -> Maybe Name.Name
 name (CoreBind cb) = case cb of
@@ -113,6 +115,7 @@ name (CoreBind cb) = case cb of
 
 name (Var v) = Just (Var.varName v)
 name (TyCon tc) = Just (TyCon.tyConName tc)
+name (DataCon dc) = Just (DataCon.dataConName dc)
 --name _ = Nothing
 
 null_hash = get_hash ([]::[Int])

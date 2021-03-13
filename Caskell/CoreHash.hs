@@ -23,6 +23,7 @@ import qualified PatSyn
 import qualified TcType
 import qualified PrimOp
 import qualified DataCon
+import qualified ConLike
 import qualified Class
 import qualified HscTypes
 import qualified NameEnv
@@ -36,6 +37,7 @@ import CoAxiom
 
 import Control.Monad
 import Control.Monad.State
+import Data.Maybe
 import Data.List
 import Data.Functor
 import Data.Coerce
@@ -53,13 +55,54 @@ import Caskell.Context
 showPpr' :: Outputable a => a -> String
 showPpr' = showSDocUnsafe . ppr
 
+-- null_hash = error "null hash"
 null_hash = get_hash ([]::[Int])
+
+name_filter :: String -> Bool
+name_filter a = any (flip (isSuffixOf) a) ["$main", "$trModule", "$dIP"]
+
+-- main hash function:
+-- takes core data (Expr, Type, DataCon, etc), a filter function and a
+-- function to obtain the hash from the coredata.
+-- returns the existing hash if that core data has been hashed already
+-- or hashes and inserts the data into the state if it has not been
+-- hashed already.
+hash_core_hashable :: CoreData -> (String -> Bool) -> CtxMonad (Hash) -> CtxMonad (Hash)
+hash_core_hashable coredata name_filter hash_function = do
+    let name = fromJust $ Caskell.Context.name $ hash_data coredata
+    let sname = short_name name
+    let uniq = Name.nameUnique name
+    mexpr <- mlookup_unique uniq
+
+    case mexpr of
+        Just uh -> do
+            dprintln $ sname ++ " has been hashed already: " ++ (show $ hash uh)
+            return $ hash uh
+
+        Nothing -> do
+            let fullname = Name.nameStableString name
+
+            if (not $ name_filter fullname) then do
+                madd_hash coredata null_hash
+
+                hash <- hash_function
+                dprintln ""
+
+                mdelete_by_unique uniq
+
+                let coredata' = coredata { hole = False }
+                madd_hash coredata' hash
+
+                return hash
+            else
+                return null_hash
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
 hash_module guts@(GHC.CoreModule _ types binds _) = do
     set_mod_guts guts
     hash_types types
+    hash_dataCons types -- datacons are also stored here
     hash_binds binds
 
 -- types
@@ -71,13 +114,13 @@ hash_types tenv = do
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#TyThing
 hash_type_tything :: TyCoRep.TyThing -> CtxMonad (Maybe Hash)
-hash_type_tything (TyCoRep.AnId _) = return Nothing -- not a type
-hash_type_tything (TyCoRep.AConLike _) = return Nothing -- data constructor, we want TYPES
-hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- TODO: newtype
 hash_type_tything (TyCoRep.ATyCon tc) = do
     ret <- hash_tyCon tc
     dprintln ""
     return $ Just ret
+hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- TODO: newtype
+hash_type_tything (TyCoRep.AnId _) = return Nothing -- not a type
+hash_type_tything (TyCoRep.AConLike _) = return Nothing -- data constructor, we want TYPES
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#TyCon
 hash_tyCon :: TyCon.TyCon -> CtxMonad (Hash)
@@ -85,36 +128,28 @@ hash_tyCon tc = do
     let name = TyCon.tyConName tc
     let uniq = TyCon.tyConUnique tc
     let sname = short_name name
-    let tcid = typeID tc
 
-    -- TODO: check if tycon isnt already hashed
-    --       see expr for help
+    let hash_func = \tc -> do
+            let tcid = typeID tc
+            -- TODO: type parameters, probably have to propagate them since theyre part of the type
+            dprint $ typeName tc ++ " " ++ sname ++ " = "
+            
+            let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
+                     | TyCon.isAlgTyCon tc = hash_algTyCon tc
+                     | TyCon.isPrimTyCon tc = hash_primTyCon tc
+                     -- TODO: implement the rest
+                     | TyCon.isTypeSynonymTyCon tc = return null_hash
+                     | TyCon.isFamilyTyCon tc = return null_hash
+                     | TyCon.isPromotedDataCon tc = return null_hash
+                     -- TyCon.TcTyCon
+                     | True = return null_hash
+
+            ret'
+
     let hash_data = TyCon tc
     let coredata = CoreData uniq hash_data True
 
-    madd_hash coredata null_hash
-
-    -- TODO: type parameters, probably have to propagate them since theyre part of the type
-    dprint $ typeName tc ++ " " ++ sname ++ " = "
-    
-    let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
-             | TyCon.isAlgTyCon tc = hash_algTyCon tc
-             | TyCon.isPrimTyCon tc = hash_primTyCon tc
-             -- TODO: implement the rest
-             | TyCon.isTypeSynonymTyCon tc = return null_hash
-             | TyCon.isFamilyTyCon tc = return null_hash
-             | TyCon.isPromotedDataCon tc = return null_hash
-             -- TyCon.TcTyCon
-             | True = return null_hash
-
-    ret <- ret'
-
-
-    mdelete_by_unique uniq
-    let coredata' = coredata { hole = False }
-    madd_hash coredata' ret
-
-    return ret
+    hash_core_hashable coredata name_filter (hash_func tc)
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
@@ -186,6 +221,7 @@ hash_type :: TyCoRep.Type -> CtxMonad (Hash)
 hash_type t = do
     let tid = typeID t
     let tname = typeName t
+
     dprint $ tname ++ "("
 
     hob <- case t of
@@ -210,6 +246,83 @@ hash_type t = do
 
     return $ get_hash hob
 
+-- data cons
+hash_dataCons :: HscTypes.TypeEnv -> CtxMonad ()
+hash_dataCons tenv = do
+    mapM (hash_dataCon_tything) $ HscTypes.typeEnvElts tenv
+    return ()
+
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#TyThing
+hash_dataCon_tything :: TyCoRep.TyThing -> CtxMonad (Maybe Hash)
+hash_dataCon_tything (TyCoRep.AConLike ac) = do
+    case ac of
+      ConLike.RealDataCon dc -> do
+        hs <- hash_dataCon dc
+        return $ Just hs
+      _ -> return Nothing
+hash_dataCon_tything _ = return Nothing
+
+-- stable order of dataCons important for hashing
+instance Ord DataCon.DataCon where
+    -- TODO: compare the arguments
+    compare a b
+      = if a == b then EQ
+        else c1 where
+          args_a = DataCon.dataConOrigArgTys a
+          args_b = DataCon.dataConOrigArgTys b
+          c1 = if length args_a < length args_b then LT
+          else
+            if length args_a > length args_b then GT
+            else compare (DataCon.dataConTag a) (DataCon.dataConTag b)
+                 
+order_dataCons :: [DataCon.DataCon] -> [DataCon.DataCon]
+order_dataCons = sort
+
+dataCon_parent_tycon_dataCons :: DataCon.DataCon -> [DataCon.DataCon]
+dataCon_parent_tycon_dataCons dc = dcs where
+    ty = DataCon.dataConOrigResTy dc
+    tycon = case ty of
+                TyCoRep.TyConApp tc _ -> tc
+                _ -> error "not a tycon"
+
+    dcs = TyCon.tyConDataCons tycon
+
+dataCon_stable_tag :: DataCon.DataCon -> Int
+dataCon_stable_tag dc = t where
+    dcs = dataCon_parent_tycon_dataCons dc
+    dcs' = order_dataCons dcs
+    t = fromJust $ findIndex (==dc) dcs'
+
+hash_dataCon :: DataCon.DataCon -> CtxMonad (Hash)
+hash_dataCon dc = do
+    let dc_name = short_name $ DataCon.dataConName dc
+    let uniq = Name.nameUnique $ DataCon.dataConName dc
+
+    let hash_func =
+          \dc -> do
+            -- TODO: univ, ex
+            let sig@(univ, ex, _, _, args, ret) = DataCon.dataConFullSig dc
+            --let dcuniv = DataCon.dataConUnivTyVars dc
+            dprint $ "<" ++ dc_name ++ "("
+
+            --tyvar_hashes <- mapM hash_var dcuniv
+            args_hashes <- mapM hash_type args
+            ret_hash <- hash_type ret
+            let stable_tag = dataCon_stable_tag dc
+
+            dprint ")>"
+            let args_bytes = map (toBytes) args_hashes
+            let ret_bytes = toBytes ret_hash
+            let tag_bytes = uniqueBytes stable_tag
+
+            return $ get_hash $ args_bytes ++ [ret_bytes, tag_bytes]
+
+    let hashdata = DataCon dc
+    let coredata = CoreData uniq hashdata True
+
+    hash_core_hashable coredata name_filter (hash_func dc)
+
+
 -- normal expressions
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
@@ -221,39 +334,10 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
     let name = Var.varName b
     let uniq = Name.nameUnique name
 
-    mexpr <- mlookup_unique uniq
+    let hash_data = CoreBind cb
+    let coredata = CoreData uniq hash_data True
 
-    case mexpr of
-        Just uh -> do
-            dprintln $ short_name name ++ " has been hashed already"
-            return $ hash uh  -- b exists already
-        Nothing -> do
-            let hash_data = CoreBind cb
-            let coredata = CoreData uniq hash_data True
-
-            let fullname = Name.nameStableString name
-
-            -- we skip these for now
-            -- TODO: dont skip them
-            let name_filter = any (flip (isSuffixOf) fullname) ["$main", "$trModule", "$dIP"]
-
-            let sname = short_name name
-
-            if (not name_filter) then do
-                madd_hash coredata null_hash
-
-                dprint $ sname ++ " = "
-                hash <- hash_expr expr
-                dprintln ""
-
-                mdelete_by_unique uniq
-
-                let coredata' = coredata { hole = False }
-                madd_hash coredata' hash
-
-                return hash
-            else
-                return null_hash
+    hash_core_hashable coredata name_filter (hash_expr expr)
 
 hash_bind (CoreSyn.Rec l) = undefined -- TODO: implement
 

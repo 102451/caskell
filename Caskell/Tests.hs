@@ -102,37 +102,26 @@ test3 = do
     ctx <- init_test 3 "simple data types"
     let get_hashed_expr = flip (get_hashed_expr') ctx
 
-    let t4 = get_hashed_expr "T4"
-    let t5 = get_hashed_expr "T5"
-    let t6 = get_hashed_expr "T6"
-    putStrLn $ show t4
-    putStrLn $ show t5
-    putStrLn $ show t6
-{-
     let t1 = get_hashed_expr "T1"
     let t2 = get_hashed_expr "T2"
     let t3 = get_hashed_expr "T3"
 
     assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
     assertNotEqual "hash T1 /= hash T3" (hash t1) (hash t3)
--}
-    {-|
-    let g = mod_guts ctx
-    let ts = GHC.cm_types g
-    let mi = lookup_name "i" ctx
 
-    case mi of
-        Just i -> do
-            let hcd = hash_core_data i
-            let cds = Data.Map.MultiKey.toList hcd
-            let names = map (fromJust . name . hash_data) cds
-            let nam = head names
+    let t4 = get_hashed_expr "T4"
+    let t5 = get_hashed_expr "T5"
+    let t6 = get_hashed_expr "T6"
+    assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
+    assertNotEqual "hash T4 /= hash T6" (hash t4) (hash t6)
 
-            let f = fromJust $ NameEnv.lookupNameEnv ts nam
-            putStrLn $ showSDocUnsafe $ ppr f
-            return ()
-        Nothing -> return ()
-    |-}
+    -- let a = get_hashed_expr "A"
+    putStrLn $ show $ get_hashed_expr "A"
+    putStrLn $ show $ get_hashed_expr "B"
+    putStrLn $ show $ get_hashed_expr "C"
+    putStrLn $ show $ get_hashed_expr "D"
+    putStrLn $ show $ get_hashed_expr "E"
+    putStrLn $ show $ get_hashed_expr "I"
 
 run_tests :: IO ()
 run_tests = do
@@ -140,6 +129,7 @@ run_tests = do
     test2
     test3
 
+    putStrLn "all tests passed"
 
 
 -- ETC
