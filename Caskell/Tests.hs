@@ -14,6 +14,8 @@ import Control.Exception
 import Caskell.Context
 import Caskell.Compile
 
+debug_output = True
+
 -- utils
 test_header :: Int -> String -> IO ()
 test_header num description = do
@@ -24,7 +26,7 @@ test_header num description = do
 init_test :: Int -> String -> IO (Context)
 init_test num description = do
     test_header num description
-    compile_file $ "tests/test" ++ show num ++ ".hs"
+    compile_file ("tests/test" ++ show num ++ ".hs") debug_output
     
 assertEqual :: Eq a => String -> a -> a -> IO ()
 assertEqual assertion x y = unless (x == y) (error $ "assertion failed: " ++ assertion)
@@ -112,6 +114,7 @@ test3 = do
     let t4 = get_hashed_expr "T4"
     let t5 = get_hashed_expr "T5"
     let t6 = get_hashed_expr "T6"
+
     assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
     assertNotEqual "hash T4 /= hash T6" (hash t4) (hash t6)
 

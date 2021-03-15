@@ -67,22 +67,22 @@ pretty_print_types (GHC.CoreModule _ types _ _) = do
 
     return $ intercalate ",\n" $ filter (/="") $ map (printTyThing) tythings
 
-run_context :: CtxMonad () -> IO Context
-run_context s = execStateT s $ empty_context
+run_context :: Bool -> CtxMonad () -> IO Context
+run_context debug s = execStateT s $ empty_context { debug = debug }
 
-hash_module' :: GHC.CoreModule -> GHC.Ghc (IO Context)
-hash_module' mod = return $ run_context $ hash_module mod
+hash_module' :: Bool -> GHC.CoreModule -> GHC.Ghc (IO Context)
+hash_module' debug mod = return $ run_context debug $ hash_module mod
 
 
 -- toStr :: (Functor m, Monad m) => CoreModule -> m String
 --toStr a = return $ coreToStr a
 
 -- compileToCoreModule :: GhcMonad m => FilePath -> m CoreModule
-compile_file :: String -> IO (Context)
-compile_file file = do
+compile_file :: String -> Bool -> IO (Context)
+compile_file file debug_output = do
     let ghcCore = GHC.compileToCoreModule file
     -- let ghc = ghcCore >>= pretty_print_binds
-    let ghc = ghcCore >>= hash_module'
+    let ghc = ghcCore >>= hash_module' debug_output
     r <- run_ghc_with_libpath ghc
     r
 

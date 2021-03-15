@@ -18,6 +18,7 @@ import qualified Name
 import qualified CoreSyn
 import qualified Literal
 import qualified Var
+import qualified Id
 import qualified IdInfo
 import qualified PatSyn
 import qualified TcType
@@ -28,11 +29,12 @@ import qualified Class
 import qualified HscTypes
 import qualified NameEnv
 import qualified TyCoRep
+import qualified TyCon
+import qualified Unique
 import BasicTypes
 import Outputable (Outputable, ppr, showSDocUnsafe)
 
 import DynFlags
-import TyCon
 import CoAxiom
 
 import Control.Monad
@@ -45,18 +47,19 @@ import Data.Sort
 import Data.Typeable
 import Data.Word
 import FastString
-import Unique
 
 import Caskell.Bytes
 import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
+import Caskell.CoreCompare
 
 showPpr' :: Outputable a => a -> String
 showPpr' = showSDocUnsafe . ppr
 
 -- null_hash = error "null hash"
 null_hash = get_hash ([]::[Int])
+placeholder_hash = get_hash ([]::[Int])
 
 name_filter :: String -> Bool
 name_filter a = any (flip (isSuffixOf) a) ["$main", "$trModule", "$dIP"]
@@ -83,7 +86,7 @@ hash_core_hashable coredata name_filter hash_function = do
             let fullname = Name.nameStableString name
 
             if (not $ name_filter fullname) then do
-                madd_hash coredata null_hash
+                madd_hash coredata placeholder_hash
 
                 hash <- hash_function
                 dprintln ""
@@ -183,7 +186,15 @@ hash_algTyCon tc = do
 -- this gets the type, order and number of data constructor arguments
 -- for each data constructor in the Data type and uniquely hashes them
 hash_dataCons_args :: [DataCon.DataCon] -> CtxMonad (Hash)
-hash_dataCons_args dcs = do
+hash_dataCons_args dcs' = do
+    -- we sort to get stable and order independent hashes for type constructors
+    let dcs = order_dataCons dcs'
+    when (length dcs' == 2) $ do
+        println $ showPpr' dcs' ++ "->" ++ showPpr' dcs
+        let [a,b] = dcs'
+        println $ show $ compare a b
+        
+
     let hash_dataCon_args dc = do
             let dc_name = short_name $ DataCon.dataConName dc
             let args = DataCon.dataConOrigArgTys dc
@@ -202,8 +213,7 @@ hash_dataCons_args dcs = do
             return $ get_hash args_bytes
 
     dc_hashes <- mapM hash_dataCon_args dcs
-    -- we sort to get stable and order independent hashes for type constructors
-    let dc_bytes = sort $ map (toBytes) dc_hashes
+    let dc_bytes = map (toBytes) dc_hashes
     return $ get_hash dc_bytes
 
 
@@ -261,20 +271,8 @@ hash_dataCon_tything (TyCoRep.AConLike ac) = do
         return $ Just hs
       _ -> return Nothing
 hash_dataCon_tything _ = return Nothing
-
--- stable order of dataCons important for hashing
-instance Ord DataCon.DataCon where
-    -- TODO: compare the arguments
-    compare a b
-      = if a == b then EQ
-        else c1 where
-          args_a = DataCon.dataConOrigArgTys a
-          args_b = DataCon.dataConOrigArgTys b
-          c1 = if length args_a < length args_b then LT
-          else
-            if length args_a > length args_b then GT
-            else compare (DataCon.dataConTag a) (DataCon.dataConTag b)
                  
+-- stable order
 order_dataCons :: [DataCon.DataCon] -> [DataCon.DataCon]
 order_dataCons = sort
 
@@ -422,12 +420,50 @@ hash_var var = do
             return h
 
           Nothing -> do
-            -- TODO: Builtin -> default hash -> return hash
-            dprint "[var not found]"
-            --when (Var.isId var) $ do
-              --  dprint $ showPpr' var
-            return null_hash
+            if (Var.isId var) then do
+                mh <- hash_id var
+                case mh of
+                  Just h -> do
+                    madd_hash (CoreData uniq (Var var) False) h
+                    return h
+                  Nothing -> do
+                    dprint "[1var not found]"
+                    return null_hash
+            else do
+                dprint "[2var not found]"
+                return null_hash
 
+-- specialization of hash_var that was not found, probably extern
+hash_id :: Var.Var -> CtxMonad (Maybe Hash)
+hash_id var = do
+    let tname = typeName var
+    let vname = Var.varName var
+    let uniq = Name.nameUnique vname
+    let details = Var.idDetails var
+
+    
+    {-
+    let ty = Var.varType var
+
+    case ty of
+      TyCoRep.FunTy{} -> do
+        dprintln $ showPpr' $ TyCoRep.ft_arg ty
+        -}
+    case details of
+      IdInfo.DataConWorkId dc -> do
+        h <- hash_dataCon dc
+        return $ Just h
+
+      IdInfo.DataConWrapId dc -> do
+        h <- hash_dataCon dc
+        return $ Just h
+        
+        -- TODO: class
+      _ -> do
+        let unfold = Id.idUnfolding var
+        
+        dprintln $ showPpr' unfold
+        return Nothing
 
 hash_literal :: Literal.Literal -> CtxMonad (Hash)
 hash_literal lit = do
@@ -609,6 +645,20 @@ instance TypeIDAble IdInfo.IdDetails where
       IdInfo.DFunId _        -> 0x0000E008
       IdInfo.CoVarId         -> 0x0000E009
       IdInfo.JoinId _        -> 0x0000E00A
+
+    typeName x = case x of
+      IdInfo.VanillaId       -> "VanillaId"
+      IdInfo.RecSelId{}      -> "RecSelId"   
+      IdInfo.DataConWorkId _ -> "DataConWorkId"
+      IdInfo.DataConWrapId _ -> "DataConWrapId"
+      IdInfo.ClassOpId _     -> "ClassOpId"
+      IdInfo.PrimOpId _      -> "PrimOpId"   
+      IdInfo.FCallId _       -> "FCallId"    
+      IdInfo.TickBoxOpId _   -> "TickBoxOpId"
+      IdInfo.DFunId _        -> "DFunId" 
+      IdInfo.CoVarId         -> "CoVarId"      
+      IdInfo.JoinId _        -> "JoinId"     
+
 
 instance TypeIDAble IdInfo.RecSelParent where
     typeID x = case x of
