@@ -7,8 +7,12 @@ module Caskell.Context
     Context(..),
     UniqueHash(..),
     CoreData(..),
+    coreData,
+    hash_data_ref,
     name,
+    uniq,
     HashedData(..),
+    hashed_data_typename,
     UniqueHashMap,
     CtxMonad,
     mkCtx,
@@ -95,19 +99,49 @@ type CoreHashMap = MultiKey CoreData
 data UniqueHash = UniqueHash
     { hash_core_data :: CoreHashMap -- a set of uniques and expressios that all have the same hash
     , hash :: Hash
+
+    -- the original definition
+    , unique_definition_ref :: Maybe (CoreData)
     }
 
 data CoreData = CoreData
     { hash_unique :: Unique.Unique
     , hash_data :: HashedData
     , hole :: Bool -- hole to be filled later
+
+    -- whether the HashedData has a core definition or not.
+    -- the first hashed non-Var HashedData has no reference,
+    -- all other HashedData sharing the same hash point to
+    -- the first HashedData.
+    -- A reference is never a Var.
+    -- Vars always point to the definition, unless there is none.
+    , core_definition_ref :: Maybe (HashedData)
+    
+    -- whether there is a definition available at all.
+    -- mainly used for external functions.
+    -- there is no definition available for some global Var.Ids e.g. unpackCString#
+    -- that have no unfolding.
+    , definitionless :: Bool
     }
+
+hash_data_ref :: UniqueHash -> Maybe HashedData
+hash_data_ref h = do
+    ref1 <- unique_definition_ref h
+    return $ hash_data ref1
+
+coreData uniq hdata hole = CoreData uniq hdata hole Nothing False
 
 data HashedData = CoreBind CoreSyn.CoreBind -- direct expression
                 | Var Var.Var -- typed reference to expression
                 | TyCon TyCon.TyCon -- type constructor (basically: a data type)
                 | DataCon DataCon.DataCon -- data constructor
     
+hashed_data_typename x = case x of
+    CoreBind _ -> "Cb" 
+    Var _      -> "Var"
+    TyCon _    -> "Tc"
+    DataCon _  -> "Dc"
+
 name :: HashedData -> Maybe Name.Name
 name (CoreBind cb) = case cb of
     CoreSyn.NonRec b _ -> name (Var b)
@@ -117,6 +151,11 @@ name (Var v) = Just (Var.varName v)
 name (TyCon tc) = Just (TyCon.tyConName tc)
 name (DataCon dc) = Just (DataCon.dataConName dc)
 --name _ = Nothing
+
+uniq :: HashedData -> Maybe Unique.Unique
+uniq hs = do
+    nam <- name hs
+    return $ Name.nameUnique nam
 
 null_hash = get_hash ([]::[Int])
 
@@ -135,16 +174,30 @@ instance MultiKeyable UniqueHash where
     empty = MultiKey [key hash]
 
 instance MultiKeyable CoreData where
-    empty = MultiKey [key (short_hash_data_name . hash_data), key hash_unique]
+    empty = MultiKey [key hash_unique]
 
 instance Show UniqueHash where
-    show a = show (hash_core_data a) ++ ": " ++ short_unique_hash_str a
+    show a = show (hash_core_data a) ++ ref ++ ": " ++ short_unique_hash_str a where
+        ref = case hash_data_ref a of
+                Just b -> " -> " ++ short_hash_data_name b ++ "<" ++ hashed_data_typename b ++ ">"
+                Nothing -> ""
 
 instance Show CoreData where
-    show a = short_hash_data_name (hash_data a) ++ t where
-        t = case hole a of
-            True -> "(h)"
-            False -> ""
+    show a = short_hash_data_name (hash_data a) ++ "<" ++ typ ++ flags ++ ">" ++ ref where
+        typ = hashed_data_typename $ hash_data a
+
+        holef = case hole a of
+                    True -> "h"
+                    False -> ""
+        deflessf = case definitionless a of
+                    True -> "d"
+                    False -> ""
+        flags' = intercalate "," $ filter (/="") [holef, deflessf]
+        flags = if Data.List.null flags' then "" else "(" ++ flags' ++ ")"
+
+        ref = case core_definition_ref a of
+                Just b -> " -> " ++ short_hash_data_name b ++ "<" ++ hashed_data_typename b ++ ">"
+                Nothing -> ""
 
 
 instance Show a => Show (MultiKey a) where
@@ -181,8 +234,9 @@ lookup_name :: String -> Context -> Maybe UniqueHash
 lookup_name key ctx = result' where
     hashes = unique_hashes ctx
     hashes' = Data.Map.MultiKey.toList hashes
-    lookups = map (\x -> (Data.Map.MultiKey.lookup key $ hash_core_data x, x)) hashes'
-    result = find (isJust . fst) lookups
+    cd = map (\x -> (Data.Map.MultiKey.toList $ hash_core_data x, x)) hashes'
+    lookups = map (\(x, y) -> (any ((==key) . short_hash_data_name . hash_data) x, y)) cd
+    result = find (fst) lookups
 
     result' = case result of
         Nothing -> Nothing
@@ -244,17 +298,20 @@ madd_hash cd h = do
     hashes <- get_hashes
     prev <- mlookup_hash h
 
-    let newhashes = case prev of
-                    Nothing -> nm where
-                      chm = Data.Map.MultiKey.insert cd empty
-                      uq = UniqueHash chm h
-                      nm = Data.Map.MultiKey.insert uq hashes
+    uq <- case prev of
+            Nothing -> do
+              let chm = Data.Map.MultiKey.insert cd empty
+              let ref = Just cd -- vars can never be first
+              return $ UniqueHash chm h ref
 
-                    Just uh -> nm where
-                      hcd = hash_core_data uh
-                      chm = Data.Map.MultiKey.insert cd hcd
-                      uq = uh { hash_core_data = chm }
-                      nm = Data.Map.MultiKey.insert uq hashes
+            Just uh -> do
+              let hcd = hash_core_data uh
+              let cd' = cd { core_definition_ref = hash_data_ref uh }
+              let chm = Data.Map.MultiKey.insert cd' hcd
+
+              return $ uh { hash_core_data = chm }
+        
+    let newhashes = Data.Map.MultiKey.insert uq hashes
         
     set_hashes newhashes
 

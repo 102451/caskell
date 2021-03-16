@@ -5,10 +5,15 @@ module Caskell.Tests
     test1,
     test2,
     test3,
-    run_tests'
+    run_tests',
+
+    scratch,
+    scratch'
 ) where
 
+import Unique
 import Data.Maybe
+import Data.Map.MultiKey
 import Control.Monad
 import Control.Exception
 import Caskell.Context
@@ -119,12 +124,17 @@ test3 = do
     assertNotEqual "hash T4 /= hash T6" (hash t4) (hash t6)
 
     -- let a = get_hashed_expr "A"
-    putStrLn $ show $ get_hashed_expr "A"
-    putStrLn $ show $ get_hashed_expr "B"
-    putStrLn $ show $ get_hashed_expr "C"
-    putStrLn $ show $ get_hashed_expr "D"
-    putStrLn $ show $ get_hashed_expr "E"
-    putStrLn $ show $ get_hashed_expr "I"
+    let a = get_hashed_expr "A"
+    let b = get_hashed_expr "B"
+    let c = get_hashed_expr "C"
+    let d = get_hashed_expr "D"
+    let e = get_hashed_expr "E"
+    let i = get_hashed_expr "I"
+
+    assertNotEqual "hash A /= hash B" (hash a) (hash b)
+    assertNotEqual "hash C /= hash D" (hash c) (hash d)
+    assertEqual "hash A == hash C" (hash a) (hash c)
+    assertEqual "hash B == hash D" (hash b) (hash d)
 
 run_tests :: IO ()
 run_tests = do
@@ -139,4 +149,30 @@ run_tests = do
 
 run_tests' :: IO ()
 run_tests' = do
-    compile_file' "tests/test3.hs"
+    compile_file' "tests/test2.hs"
+
+scratch :: IO ()
+scratch = do
+    ctx <- compile_file "tests/scratch.hs" debug_output
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+    
+    let a = get_hashed_expr "A"
+    let cores = Data.Map.MultiKey.toList $ hash_core_data a
+
+    let uq = Unique.getKey . fromJust . uniq
+    let uref = unique_definition_ref a
+    let crefs = map core_definition_ref cores
+    let refname x = case x of
+                       Just hd -> "Just " ++ hashed_data_typename hd ++ " " ++ (show $ uq hd)
+                       Nothing -> "Nothing"
+
+    let showcore x = short_hash_data_name x ++ " " ++ hashed_data_typename x ++ " " ++ (show $ uq x)
+
+    putStrLn $  refname $core_definition_ref $ fromJust uref
+    putStrLn $ show $ map refname crefs
+    putStrLn $ show $ map (showcore .hash_data) cores
+
+    putStrLn $ show a
+
+scratch' :: IO ()
+scratch' = compile_file' "tests/scratch.hs"

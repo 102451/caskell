@@ -150,7 +150,7 @@ hash_tyCon tc = do
             ret'
 
     let hash_data = TyCon tc
-    let coredata = CoreData uniq hash_data True
+    let coredata = coreData uniq hash_data True
 
     hash_core_hashable coredata name_filter (hash_func tc)
 
@@ -316,7 +316,7 @@ hash_dataCon dc = do
             return $ get_hash $ args_bytes ++ [ret_bytes, tag_bytes]
 
     let hashdata = DataCon dc
-    let coredata = CoreData uniq hashdata True
+    let coredata = coreData uniq hashdata True
 
     hash_core_hashable coredata name_filter (hash_func dc)
 
@@ -333,7 +333,7 @@ hash_bind cb@(CoreSyn.NonRec b expr) = do
     let uniq = Name.nameUnique name
 
     let hash_data = CoreBind cb
-    let coredata = CoreData uniq hash_data True
+    let coredata = coreData uniq hash_data True
 
     hash_core_hashable coredata name_filter (hash_expr expr)
 
@@ -416,54 +416,61 @@ hash_var var = do
           Just bind -> do
             h <- hash_bind bind
             -- add the existing hash to the var
-            madd_hash (CoreData uniq (Var var) False) h
+            uh' <- mlookup_hash h
+            let uh = fromJust uh'
+            let ref = hash_data_ref uh
+            madd_hash (CoreData uniq (Var var) False ref False) h
             return h
 
           Nothing -> do
             if (Var.isId var) then do
                 mh <- hash_id var
                 case mh of
-                  Just h -> do
-                    madd_hash (CoreData uniq (Var var) False) h
+                  Just (h, defless) -> do
+                    if not defless then do
+                        uh' <- mlookup_hash h
+                        let uh = fromJust uh'
+                        let ref = hash_data_ref uh
+                        madd_hash (CoreData uniq (Var var) False ref False) h
+                    else
+                        madd_hash (CoreData uniq (Var var) False Nothing True) h
+                        
                     return h
+
                   Nothing -> do
-                    dprint "[1var not found]"
+                    dprint "[var not found]"
                     return null_hash
             else do
-                dprint "[2var not found]"
+                dprint "[var not found]"
                 return null_hash
 
 -- specialization of hash_var that was not found, probably extern
-hash_id :: Var.Var -> CtxMonad (Maybe Hash)
+hash_id :: Var.Var -> CtxMonad (Maybe (Hash, Bool))
 hash_id var = do
     let tname = typeName var
     let vname = Var.varName var
     let uniq = Name.nameUnique vname
     let details = Var.idDetails var
 
-    
-    {-
-    let ty = Var.varType var
-
-    case ty of
-      TyCoRep.FunTy{} -> do
-        dprintln $ showPpr' $ TyCoRep.ft_arg ty
-        -}
     case details of
       IdInfo.DataConWorkId dc -> do
         h <- hash_dataCon dc
-        return $ Just h
+        return $ Just (h, False)
 
       IdInfo.DataConWrapId dc -> do
         h <- hash_dataCon dc
-        return $ Just h
+        return $ Just (h, False)
         
         -- TODO: class
       _ -> do
         let unfold = Id.idUnfolding var
-        
-        dprintln $ showPpr' unfold
-        return Nothing
+
+        case unfold of
+          CoreSyn.NoUnfolding -> do
+            dprintln "[no definition available]"
+            return $ Just (get_hash $ Name.nameStableString vname, True)
+          _ ->
+            return $ Just (null_hash, True)
 
 hash_literal :: Literal.Literal -> CtxMonad (Hash)
 hash_literal lit = do
