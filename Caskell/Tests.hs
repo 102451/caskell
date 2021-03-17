@@ -24,9 +24,7 @@ debug_output = True
 -- utils
 test_header :: Int -> String -> IO ()
 test_header num description = do
-    putStrLn "\n================="
-    putStrLn $ "TEST " ++ show num ++ " " ++ description
-    putStrLn "================="
+    putStrLn $ "\ntest " ++ show num ++ ": " ++ description
 
 init_test :: Int -> String -> IO (Context)
 init_test num description = do
@@ -38,6 +36,9 @@ assertEqual assertion x y = unless (x == y) (error $ "assertion failed: " ++ ass
 
 assertNotEqual :: Eq a => String -> a -> a -> IO ()
 assertNotEqual assertion x y = when (x == y) (error $ "assertion failed: " ++ assertion)
+
+pass :: IO ()
+pass = putStrLn "passed"
 
 -- error when not found
 get_hashed_expr' :: String -> Context -> UniqueHash
@@ -62,6 +63,8 @@ test1 = do
     assertEqual "hash c == hash d" (hash c) (hash d)
 
     assertNotEqual "hash a /= hash e" (hash a) (hash e)
+
+    pass
 
 test2 :: IO ()
 test2 = do
@@ -103,6 +106,7 @@ test2 = do
     assertEqual "hash stringHello == hash stringHello_2" (hash stringHello) (hash stringHello_2)
     assertNotEqual "hash stringHello /= hash stringWorld" (hash stringHello) (hash stringWorld)
 
+    pass
 
 test3 :: IO ()
 test3 = do
@@ -135,6 +139,8 @@ test3 = do
     assertNotEqual "hash C /= hash D" (hash c) (hash d)
     assertEqual "hash A == hash C" (hash a) (hash c)
     assertEqual "hash B == hash D" (hash b) (hash d)
+
+    pass
 
 run_tests :: IO ()
 run_tests = do

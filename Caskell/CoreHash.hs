@@ -57,7 +57,7 @@ import Caskell.CoreCompare
 showPpr' :: Outputable a => a -> String
 showPpr' = showSDocUnsafe . ppr
 
--- null_hash = error "null hash"
+--null_hash = error "null hash"
 null_hash = get_hash ([]::[Int])
 placeholder_hash = get_hash ([]::[Int])
 
@@ -79,8 +79,13 @@ hash_core_hashable coredata name_filter hash_function = do
 
     case mexpr of
         Just uh -> do
-            dprintln $ sname ++ " has been hashed already: " ++ (show $ hash uh)
-            return $ hash uh
+            let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
+            if hole cd then do
+                dprintln $ sname ++ " is RECURSIVE"
+                return $ null_hash
+            else do
+                dprintln $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
+                return $ hash uh
 
         Nothing -> do
             let fullname = Name.nameStableString name
@@ -140,10 +145,10 @@ hash_tyCon tc = do
             let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
                      | TyCon.isAlgTyCon tc = hash_algTyCon tc
                      | TyCon.isPrimTyCon tc = hash_primTyCon tc
+                     | TyCon.isPromotedDataCon tc = hash_promotedDataCon tc
                      -- TODO: implement the rest
                      | TyCon.isTypeSynonymTyCon tc = return null_hash
                      | TyCon.isFamilyTyCon tc = return null_hash
-                     | TyCon.isPromotedDataCon tc = return null_hash
                      -- TyCon.TcTyCon
                      | True = return null_hash
 
@@ -189,28 +194,36 @@ hash_dataCons_args :: [DataCon.DataCon] -> CtxMonad (Hash)
 hash_dataCons_args dcs' = do
     -- we sort to get stable and order independent hashes for type constructors
     let dcs = order_dataCons dcs'
-    when (length dcs' == 2) $ do
-        println $ showPpr' dcs' ++ "->" ++ showPpr' dcs
-        let [a,b] = dcs'
-        println $ show $ compare a b
-        
 
     let hash_dataCon_args dc = do
             let dc_name = short_name $ DataCon.dataConName dc
-            let args = DataCon.dataConOrigArgTys dc
-            -- TODO: data con type variables (THEY CAN BE DIFFERENT FROM TYCON TYVARS?)
-            --let dcuniv = DataCon.dataConUnivTyVars dc
-            --dprint $ "<" ++ dc_name ++ showPpr' dcuniv ++ "(" ++ showPpr' args ++ ")>"
+
+            let sig@(univ, ex, _, _, args, ret) = DataCon.dataConFullSig dc
+            let ret_tyargs = case ret of
+                                -- we do this to get the type arguments for the
+                                -- return value of the data constructor
+                                -- (the resulting type).
+                                -- we can't hash the resulting type here because
+                                -- that would cause infinite recursion.
+                                TyCoRep.TyConApp _ args -> args
+                                _ -> []
+
             dprint $ "<" ++ dc_name ++ "("
 
             --tyvar_hashes <- mapM hash_var dcuniv
             -- dprintln $ concatMap show tyvar_hashes
+            tyvar_hashes <- mapM hash_var univ
+            extyvar_hashes <- mapM hash_var ex
             args_hashes <- mapM hash_type args
+            ret_tyargs_hashes <- mapM hash_type ret_tyargs
 
             dprint ")>"
+            let tyvar_bytes = map (toBytes) tyvar_hashes
+            let extyvar_bytes = map (toBytes) extyvar_hashes
             let args_bytes = map (toBytes) args_hashes
+            let ret_tyargs_bytes = map (toBytes) ret_tyargs_hashes
 
-            return $ get_hash args_bytes
+            return $ get_hash $ tyvar_bytes ++ extyvar_bytes ++ args_bytes ++ ret_tyargs_bytes
 
     dc_hashes <- mapM hash_dataCon_args dcs
     let dc_bytes = map (toBytes) dc_hashes
@@ -221,12 +234,22 @@ hash_dataCons_args dcs' = do
 hash_primTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_primTyCon tc = do
     -- prim tycons are, well, primitives.
-    -- just hash them directly
+    -- just hash them by name
 
     let tcname = TyCon.tyConName tc
 
     return $ get_hash $ Name.nameStableString tcname
 
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#PromotedDataCon
+hash_promotedDataCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_promotedDataCon tc = do
+    --let tcname = TyCon.tyConName tc
+
+    --return $ get_hash $ Name.nameStableString tcname
+    return null_hash
+
+-- type hash
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#Type
 hash_type :: TyCoRep.Type -> CtxMonad (Hash)
 hash_type t = do
     let tid = typeID t
@@ -300,7 +323,6 @@ hash_dataCon dc = do
           \dc -> do
             -- TODO: univ, ex
             let sig@(univ, ex, _, _, args, ret) = DataCon.dataConFullSig dc
-            --let dcuniv = DataCon.dataConUnivTyVars dc
             dprint $ "<" ++ dc_name ++ "("
 
             --tyvar_hashes <- mapM hash_var dcuniv
@@ -440,6 +462,11 @@ hash_var var = do
                   Nothing -> do
                     dprint "[var not found]"
                     return null_hash
+
+            else if (Var.isTyVar var) then do
+                h <- hash_tyVar var
+                return h
+
             else do
                 dprint "[var not found]"
                 return null_hash
@@ -447,7 +474,6 @@ hash_var var = do
 -- specialization of hash_var that was not found, probably extern
 hash_id :: Var.Var -> CtxMonad (Maybe (Hash, Bool))
 hash_id var = do
-    let tname = typeName var
     let vname = Var.varName var
     let uniq = Name.nameUnique vname
     let details = Var.idDetails var
@@ -471,6 +497,12 @@ hash_id var = do
             return $ Just (get_hash $ Name.nameStableString vname, True)
           _ ->
             return $ Just (null_hash, True)
+
+hash_tyVar :: Var.Var -> CtxMonad (Hash)
+hash_tyVar var = do
+    let t = Var.varType var
+    hash_type t
+    
 
 hash_literal :: Literal.Literal -> CtxMonad (Hash)
 hash_literal lit = do
