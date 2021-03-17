@@ -102,8 +102,9 @@ hash_core_hashable coredata name_filter hash_function = do
                 madd_hash coredata' hash
 
                 return hash
-            else
-                return null_hash
+            else do
+                dprintln "filtered"
+                return placeholder_hash
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
@@ -138,8 +139,6 @@ hash_tyCon tc = do
     let sname = short_name name
 
     let hash_func = \tc -> do
-            let tcid = typeID tc
-            -- TODO: type parameters, probably have to propagate them since theyre part of the type
             dprint $ typeName tc ++ " " ++ sname ++ " = "
             
             let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
@@ -152,23 +151,45 @@ hash_tyCon tc = do
                      -- TyCon.TcTyCon
                      | True = return null_hash
 
-            ret'
+            let tcid = typeID tc
+            let bndrs = TyCon.tyConBinders tc
+            let kind = TyCon.tyConResKind tc
+
+            bndrs_hashes <- mapM hash_tyConBinder bndrs
+            kind_hash <- hash_type kind
+            content_hash <- ret'
+
+            let tb = toBytes tcid
+            let bndrs_bytes = map (toBytes) bndrs_hashes
+            let kind_bytes = toBytes kind_hash
+            let content_bytes = toBytes content_hash
+
+            let hsh = get_hash $ tb : bndrs_bytes ++ kind_bytes : [content_bytes]
+            return hsh
 
     let hash_data = TyCon tc
     let coredata = coreData uniq hash_data True
 
     hash_core_hashable coredata name_filter (hash_func tc)
 
+hash_tyConBinder :: TyCon.TyConBinder -> CtxMonad (Hash)
+hash_tyConBinder (Var.Bndr v vis) = do
+    vhash <- hash_var v
+    let visb = uniqueBytes vis
+
+    return $ get_hash (visb ++ toBytes vhash)
+
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_funTyCon tc = do
+    let tcid = typeID tc
+    -- TODO: implement
     return null_hash
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#AlgTyCon
 hash_algTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_algTyCon tc = do
     -- TODO: stupid theta (the things on the left side, e.g. data Eq a => T a
-    -- TODO: type variables
     let rhs = TyCon.algTyConRhs tc
     let rhsid = typeID rhs
 
@@ -178,7 +199,6 @@ hash_algTyCon tc = do
       TyCon.AbstractTyCon -> return []
       TyCon.DataTyCon dcs _ _ -> do
         args_hash <- hash_dataCons_args dcs
-        -- TODO: temporary, hash data constructors again with this hash
         return $ toBytes args_hash
 
       TyCon.TupleTyCon dc sort -> return $ toBytes sort -- TODO
@@ -229,13 +249,11 @@ hash_dataCons_args dcs' = do
     let dc_bytes = map (toBytes) dc_hashes
     return $ get_hash dc_bytes
 
-
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#PrimTyCon
 hash_primTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_primTyCon tc = do
     -- prim tycons are, well, primitives.
     -- just hash them by name
-
     let tcname = TyCon.tyConName tc
 
     return $ get_hash $ Name.nameStableString tcname
@@ -244,9 +262,7 @@ hash_primTyCon tc = do
 hash_promotedDataCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_promotedDataCon tc = do
     --let tcname = TyCon.tyConName tc
-
-    --return $ get_hash $ Name.nameStableString tcname
-    return null_hash
+    return $ null_hash
 
 -- type hash
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#Type
@@ -495,7 +511,8 @@ hash_id var = do
           CoreSyn.NoUnfolding -> do
             dprintln "[no definition available]"
             return $ Just (get_hash $ Name.nameStableString vname, True)
-          _ ->
+          _ -> do
+            dprintln "UNFOLDING?"
             return $ Just (null_hash, True)
 
 hash_tyVar :: Var.Var -> CtxMonad (Hash)
@@ -771,6 +788,16 @@ instance TypeIDAble TyCon.TyConBndrVis where
     typeID (TyCon.AnonTCB _)  = 0x00021001
     typeName (TyCon.NamedTCB _) = "Named"
     typeName (TyCon.AnonTCB _)  = "Anon"
+
+instance UniquelySerializable TyCon.TyConBndrVis where
+    uniqueBytes x = bytes where
+        tb = toBytes $ typeID x
+        bts = case x of
+          TyCon.NamedTCB y -> toBytes y
+          TyCon.AnonTCB y -> toBytes y
+
+        lb = toBytes (sum $ map (BS.length) bts)
+        bytes = tb ++ (toBytes (bytesLength lb :: Word8)) ++ lb ++ bts
 
 -- Type constructor right hand side of data
 instance TypeIDAble TyCon.AlgTyConRhs where
