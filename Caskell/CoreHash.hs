@@ -57,8 +57,8 @@ import Caskell.CoreCompare
 showPpr' :: Outputable a => a -> String
 showPpr' = showSDocUnsafe . ppr
 
---null_hash = error "null hash"
-null_hash = get_hash ([]::[Int])
+null_hash = error "null hash"
+-- null_hash = get_hash ([]::[Int])
 placeholder_hash = get_hash ([]::[Int])
 
 name_filter :: String -> Bool
@@ -82,7 +82,7 @@ hash_core_hashable coredata name_filter hash_function = do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
                 dprintln $ sname ++ " is RECURSIVE"
-                return $ null_hash
+                return $ placeholder_hash -- TODO: CHANGE TO NULL_HASH
             else do
                 dprintln $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh
@@ -144,9 +144,9 @@ hash_tyCon tc = do
             let ret' | TyCon.isFunTyCon tc = hash_funTyCon tc
                      | TyCon.isAlgTyCon tc = hash_algTyCon tc
                      | TyCon.isPrimTyCon tc = hash_primTyCon tc
+                     | TyCon.isTypeSynonymTyCon tc = hash_typeSynonymTyCon tc
+                     -- TODO: these are extensions
                      | TyCon.isPromotedDataCon tc = hash_promotedDataCon tc
-                     -- TODO: implement the rest
-                     | TyCon.isTypeSynonymTyCon tc = return null_hash
                      | TyCon.isFamilyTyCon tc = return null_hash
                      -- TyCon.TcTyCon
                      | True = return null_hash
@@ -201,9 +201,9 @@ hash_algTyCon tc = do
         args_hash <- hash_dataCons_args dcs
         return $ toBytes args_hash
 
-      TyCon.TupleTyCon dc sort -> return $ toBytes sort -- TODO
-      TyCon.SumTyCon dcs _ -> return [] -- TODO
-      TyCon.NewTyCon dc t _ _ _ -> return [] -- TODO
+      TyCon.TupleTyCon dc sort -> return $ error "null" ++ toBytes sort -- TODO
+      TyCon.SumTyCon dcs _ -> return $ error "null" -- TODO
+      TyCon.NewTyCon dc t _ _ _ -> return $ error "null" -- TODO
 
     let bts = toBytes rhsid ++ rhs_bts
     return $ get_hash bts
@@ -258,11 +258,23 @@ hash_primTyCon tc = do
 
     return $ get_hash $ Name.nameStableString tcname
 
+-- Promoted DataCons are a GHC Extension "DataKinds"
+-- https://downloads.haskell.org/~ghc/7.8.4/docs/html/users_guide/promotion.html
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#PromotedDataCon
 hash_promotedDataCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_promotedDataCon tc = do
     --let tcname = TyCon.tyConName tc
-    return $ null_hash
+    let dc = fromJust $ TyCon.isPromotedDataCon_maybe tc
+    
+    hash_dataCons_args [dc]
+
+-- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#SynonymTyCon
+hash_typeSynonymTyCon :: TyCon.TyCon -> CtxMonad (Hash)
+hash_typeSynonymTyCon tc = do
+    --let tcname = TyCon.tyConName tc
+    let syn = fromJust $ TyCon.synTyConRhs_maybe tc
+
+    hash_type syn
 
 -- type hash
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#Type
