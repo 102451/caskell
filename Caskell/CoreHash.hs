@@ -81,10 +81,10 @@ hash_core_hashable coredata name_filter hash_function = do
         Just uh -> do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
-                dprintln $ sname ++ " is RECURSIVE"
+                dprint $ sname ++ " is RECURSIVE"
                 return $ placeholder_hash -- TODO: CHANGE TO NULL_HASH
             else do
-                dprintln $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
+                dprint $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh
 
         Nothing -> do
@@ -182,7 +182,9 @@ hash_tyConBinder (Var.Bndr v vis) = do
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_funTyCon tc = do
-    let tcid = typeID tc
+    let n = TyCon.tyConName tc
+
+    dprintln $ short_name n
     -- TODO: implement
     return null_hash
 
@@ -289,19 +291,35 @@ hash_type t = do
         TyCoRep.TyVarTy var -> do
             vhash <- hash_var var
             return $ H vhash
-            -- TODO: finish the rest
-        TyCoRep.AppTy t1 t2 -> return $ B tid []
+
+        TyCoRep.AppTy t1 t2 -> do
+            dprint "("
+            h1 <- hash_type t1
+            dprint " "
+            h2 <- hash_type t2
+            dprint ")"
+            return $ B tid (toBytes h1 ++ toBytes h2)
+
         TyCoRep.TyConApp tc ts -> do
             tchash <- hash_tyCon tc
             dprint "["
             typehashes <- mapM (hash_type) ts
             dprint "]"
             return $ B tid $ toBytes tchash ++ concatMap (toBytes) typehashes
-        TyCoRep.ForAllTy _ _ -> return $ B tid []
-        TyCoRep.FunTy{} -> return $ B tid []
-        TyCoRep.LitTy _ -> return $ B tid []
-        TyCoRep.CastTy _ _ -> return $ B tid []
-        TyCoRep.CoercionTy _ -> return $ B tid []
+
+        -- TODO: finish the rest
+        TyCoRep.ForAllTy _ _ -> return $ H null_hash
+        TyCoRep.FunTy _ t arg -> do
+            dprint "("
+            h1 <- hash_type t
+            dprint " -> "
+            h2 <- hash_type arg
+            dprint ")"
+            return $ B tid (toBytes h1 ++ toBytes h2)
+            
+        TyCoRep.LitTy _ -> return $ H null_hash
+        TyCoRep.CastTy _ _ -> return $ H null_hash
+        TyCoRep.CoercionTy _ -> return $ H null_hash
 
     dprint ")"
 
@@ -394,52 +412,57 @@ hash_expr expr = do
     let tid = typeID expr
     let tname = typeName expr
 
-    dprint tname
-
     hob <- case expr of
         CoreSyn.Var var -> do
-            dprint "."
+            dprint "Var."
             h <- hash_var var
             return $ H h
 
         CoreSyn.Lit lit -> do
-            dprint "."
             h <- hash_literal lit
             return $ H h
 
         CoreSyn.App e1 e2 -> do
             dprint "("
             b1 <- hash_expr e1
-            dprint ", "
+            dprint " "
             b2 <- hash_expr e2
             dprint ")"
             return $ B tid $ toBytes b1 ++ toBytes b2
 
     -- TODO: implement
         CoreSyn.Lam b e -> do
-            return $ B tid []
+            dprintln "lambda"
+            return $ H null_hash
 
     -- TODO: implement
         CoreSyn.Let b e -> do
-            return $ B tid []
+            dprintln "let"
+            return $ H null_hash
 
     -- TODO: implement
         CoreSyn.Case e b t alts -> do
-            return $ B tid []
+            dprintln "case"
+            return $ H null_hash
 
     -- TODO: implement
         CoreSyn.Cast e coer -> do
-            return $ B tid []
+            dprintln "cast"
+            return $ H null_hash
 
     -- TODO: implement
         CoreSyn.Type t -> do
-            return $ B tid []
+            h <- hash_type t
+            return $ H h
 
     -- TODO: implement
         CoreSyn.Coercion coer -> do
-            return $ B tid []
+            dprintln "coercion"
+            return $ H null_hash
 
-        _ -> return $ B tid []
+        _ -> do
+            dprintln "etc"
+            return $ H null_hash
 
     let hash = get_hash hob
 
@@ -521,10 +544,10 @@ hash_id var = do
 
         case unfold of
           CoreSyn.NoUnfolding -> do
-            dprintln "[no definition available]"
+            dprint "[no definition available]"
             return $ Just (get_hash $ Name.nameStableString vname, True)
           _ -> do
-            dprintln "UNFOLDING?"
+            dprint "UNFOLDING?"
             return $ Just (null_hash, True)
 
 hash_tyVar :: Var.Var -> CtxMonad (Hash)
@@ -542,13 +565,13 @@ hash_literal lit = do
 
     hob <- case lit of
         Literal.LitChar c -> do
-            dprint $ "(" ++ c : ")"
+            dprint $ "('" ++ c : "')"
             return $ B tid $ uniqueBytes c
 
-        -- TODO: number type maybe
         Literal.LitNumber lnt i t -> do
             dprint $ "(" ++ show i ++ ")"
-            return $ B tid $ toBytes lnt ++ uniqueBytes i
+            th <- hash_type t
+            return $ B tid $ toBytes lnt ++ uniqueBytes i ++ toBytes th
 
         Literal.LitString s -> do
             dprint $ "(" ++ show s ++ ")"
@@ -561,8 +584,9 @@ hash_literal lit = do
         Literal.LitDouble r -> do
             dprint $ "(" ++ show r ++ ")"
             return $ B tid $ uniqueBytes r
+
         _ -> do
-            return $ B tid []
+            return $ H null_hash
 
     let hash = get_hash hob
 

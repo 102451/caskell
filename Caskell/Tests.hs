@@ -5,6 +5,7 @@ module Caskell.Tests
     test1,
     test2,
     test3,
+    test4,
     run_tests',
 
     scratch,
@@ -133,13 +134,87 @@ test3 = do
     let c = get_hashed_expr "C"
     let d = get_hashed_expr "D"
     let e = get_hashed_expr "E"
-    let i = get_hashed_expr "I"
 
     assertNotEqual "hash A /= hash B" (hash a) (hash b)
     assertNotEqual "hash C /= hash D" (hash c) (hash d)
     assertEqual "hash A == hash C" (hash a) (hash c)
     assertEqual "hash B == hash D" (hash b) (hash d)
 
+    let h = get_hashed_expr "H"
+    let i = get_hashed_expr "I"
+    let j = get_hashed_expr "J"
+    let k = get_hashed_expr "K"
+    let l = get_hashed_expr "L"
+    let m = get_hashed_expr "M"
+
+    assertEqual "hash H == hash K" (hash h) (hash k)
+    assertEqual "hash I == hash J" (hash i) (hash j)
+    assertNotEqual "hash H /= hash L" (hash h) (hash l)
+    -- position matters within the same tycon
+    assertNotEqual "hash L /= hash M" (hash l) (hash m)
+
+    let t7  = get_hashed_expr "T7"
+    let t8  = get_hashed_expr "T8"
+    let t9  = get_hashed_expr "T9"
+    let t10 = get_hashed_expr "T10"
+
+    assertEqual "hash T7 == hash T8" (hash t7) (hash t8)
+    assertNotEqual "hash T7 /= hash T9" (hash t7) (hash t9)
+    assertNotEqual "hash T7 /= hash T10" (hash t7) (hash t10)
+    assertNotEqual "hash T9 /= hash T10" (hash t9) (hash t10)
+
+    let o = get_hashed_expr "O"
+    let p = get_hashed_expr "P"
+    let q = get_hashed_expr "Q"
+    let r = get_hashed_expr "R"
+
+    assertEqual "hash O == hash P" (hash o) (hash p)
+    assertNotEqual "hash O /= hash Q" (hash o) (hash q)
+    assertNotEqual "hash O /= hash R" (hash o) (hash r)
+
+    let t11 = get_hashed_expr "T11"
+    let t12 = get_hashed_expr "T12"
+
+    assertEqual "hash T11 == hash T12" (hash t11) (hash t12)
+    assertNotEqual "hash T11 /= hash T4" (hash t11) (hash t4)
+    assertNotEqual "hash T11 /= hash T5" (hash t11) (hash t5)
+
+    let t13 = get_hashed_expr "T13"
+    let t14 = get_hashed_expr "T14"
+
+    assertEqual "hash T13 == hash T14" (hash t13) (hash t14)
+    assertNotEqual "hash T13 /= hash T6" (hash t13) (hash t6)
+
+    let s = get_hashed_expr "S"
+    let t = get_hashed_expr "T"
+    let u = get_hashed_expr "U"
+    let v = get_hashed_expr "V"
+
+    assertEqual "hash S == hash V" (hash s) (hash v)
+    assertEqual "hash T == hash U" (hash t) (hash u)
+    assertNotEqual "hash S /= hash H" (hash s) (hash h)
+    -- T and I look similar but produce different Types,
+    -- therefore hash is different
+    assertNotEqual "hash T /= hash I" (hash t) (hash i)
+
+    let w = get_hashed_expr "W"
+    let x = get_hashed_expr "X"
+    let y = get_hashed_expr "Y"
+    let z = get_hashed_expr "Z"
+
+    assertEqual "hash W == hash Z" (hash w) (hash z)
+    assertEqual "hash X == hash Y" (hash x) (hash y)
+    assertNotEqual "hash W /= hash Y" (hash w) (hash y)
+    assertNotEqual "hash X /= hash Z" (hash x) (hash z)
+
+    pass
+
+test4 :: IO ()
+test4 = do
+    ctx <- init_test 4 "TODO"
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    putStrLn $ show ctx
     pass
 
 run_tests :: IO ()
@@ -147,6 +222,7 @@ run_tests = do
     test1
     test2
     test3
+    test4
 
     putStrLn "all tests passed"
 
