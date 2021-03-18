@@ -211,10 +211,46 @@ test3 = do
 
 test4 :: IO ()
 test4 = do
-    ctx <- init_test 4 "TODO"
+    ctx <- init_test 4 "recursive data types"
     let get_hashed_expr = flip (get_hashed_expr') ctx
 
-    putStrLn $ show ctx
+    let mylist = get_hashed_expr "MyList"
+    let t1 = get_hashed_expr "T1"
+    let t2 = get_hashed_expr "T2"
+    let t3 = get_hashed_expr "T3"
+
+    assertEqual "hash MyList == hash T1" (hash mylist) (hash t1)
+    assertNotEqual "hash T1 /= hash T2" (hash t1) (hash t2)
+    assertNotEqual "hash T1 /= hash T3" (hash t1) (hash t3)
+    assertNotEqual "hash T2 /= hash T3" (hash t2) (hash t3)
+
+    let x = get_hashed_expr "X"
+    let y = get_hashed_expr "Y"
+    let a = get_hashed_expr "A"
+    let b = get_hashed_expr "B"
+    let c = get_hashed_expr "C"
+    let d = get_hashed_expr "D"
+
+    assertNotEqual "hash X /= hash A" (hash x) (hash a)
+    assertNotEqual "hash X /= hash C" (hash x) (hash c)
+    assertNotEqual "hash A /= hash C" (hash a) (hash c)
+    assertNotEqual "hash Y /= hash B" (hash y) (hash b)
+    assertNotEqual "hash Y /= hash D" (hash y) (hash d)
+    assertNotEqual "hash B /= hash D" (hash b) (hash d)
+
+    let t4 = get_hashed_expr "T4"
+    let t5 = get_hashed_expr "T5"
+
+    assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
+
+    let e = get_hashed_expr "E"
+    let f = get_hashed_expr "F"
+    let g = get_hashed_expr "G"
+    let h = get_hashed_expr "H"
+
+    assertEqual "hash E == hash G" (hash e) (hash g)
+    assertEqual "hash F == hash H" (hash f) (hash h)
+
     pass
 
 run_tests :: IO ()
