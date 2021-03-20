@@ -19,6 +19,7 @@ import Control.Monad
 import Control.Exception
 import Caskell.Context
 import Caskell.Compile
+import Caskell.DepGraph
 
 debug_output = True
 
@@ -274,23 +275,14 @@ scratch = do
     ctx <- compile_file "tests/scratch.hs" debug_output
     let get_hashed_expr = flip (get_hashed_expr') ctx
     
-    let a = get_hashed_expr "A"
-    let cores = Data.Map.MultiKey.toList $ hash_core_data a
+    let t = get_hashed_expr "T"
+    let hd = hash_data $ fromJust $ unique_definition_ref t
+    let tc = case hd of
+                TyCon x -> x
+                _ -> undefined
 
-    let uq = Unique.getKey . fromJust . uniq
-    let uref = unique_definition_ref a
-    let crefs = map core_definition_ref cores
-    let refname x = case x of
-                       Just hd -> "Just " ++ hashed_data_typename hd ++ " " ++ (show $ uq hd)
-                       Nothing -> "Nothing"
-
-    let showcore x = short_hash_data_name x ++ " " ++ hashed_data_typename x ++ " " ++ (show $ uq x)
-
-    putStrLn $  refname $core_definition_ref $ fromJust uref
-    putStrLn $ show $ map refname crefs
-    putStrLn $ show $ map (showcore .hash_data) cores
-
-    putStrLn $ show a
+    let tdep = dep_graph_from_tyCon tc
+    putStrLn $ show tdep
 
 scratch' :: IO ()
 scratch' = compile_file' "tests/scratch.hs"
