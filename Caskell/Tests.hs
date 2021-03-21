@@ -12,6 +12,13 @@ module Caskell.Tests
     scratch'
 ) where
 
+-- TEMPORARY
+import TyCon
+import DataCon
+import TyCoRep
+import Var
+-- TEMPORARY END
+
 import Unique
 import Data.Maybe
 import Data.Map.MultiKey
@@ -275,11 +282,30 @@ scratch = do
     ctx <- compile_file "tests/scratch.hs" debug_output
     let get_hashed_expr = flip (get_hashed_expr') ctx
     
-    let t = get_hashed_expr "T"
+    let t = get_hashed_expr "T1"
     let hd = hash_data $ fromJust $ unique_definition_ref t
     let tc = case hd of
                 TyCon x -> x
                 _ -> undefined
+    {-
+    let dcs = TyCon.tyConDataCons tc
+    let args = concatMap (DataCon.dataConOrigArgTys) dcs
+
+    let add_ty ty = case ty of
+          TyCoRep.TyConApp tc _ -> do
+            putStr $ (short_name $ TyCon.tyConName tc) ++ ", "
+
+          TyCoRep.TyVarTy var -> do
+            if Var.isTyVar var then do
+              let t = Var.varType var
+              add_ty t
+            else
+              undefined
+          _ -> undefined
+
+    mapM_ (add_ty) args
+    putStrLn ""
+    -}
 
     let tdep = dep_graph_from_tyCon tc
     putStrLn $ show tdep

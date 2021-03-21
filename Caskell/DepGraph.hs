@@ -59,7 +59,7 @@ mkDepDataConRecordEntry dc = DepDataConRecordEntry
 instance Eq DepDataConRecordEntry where
     (==) a b = dce_dataCon a == dce_dataCon b
 
-data RecTy = Ty TyCoRep.Type
+data RecTy = Ty TyCon.TyCon [RecTy] -- arguments
            | Rec Int -- int = index in records, ONLY for recursive tycons
 
 type TyDepGraph = DepGraph DepGraphTypeRecord
@@ -77,9 +77,13 @@ instance Show TyDepGraph where
       tcs = short_name . TyCon.tyConName
 
       -- show one recty
-      rectys = \r -> case r of
-                    Ty ty -> show ty
-                    Rec i -> recs i
+      rectys r = case r of
+                Ty ty args -> s' where
+                    ts = show ty 
+                    argss = intercalate " " $ map (rectys) args
+                    s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
+
+                Rec i -> recs i
             
 
       -- show one DepDataConRecordEntry
@@ -264,43 +268,120 @@ madd_dataCon ti dc = do
 
       Just i -> return ()
 
-madd_dataConArg :: (Int, Int) -> TyCoRep.Type -> TyDepMonad ()
-madd_dataConArg is@(ti, di) ty = do
+mis_recursive' :: Int -> TyCon.TyCon -> [TyCon.TyCon] -> TyDepMonad (Bool)
+mis_recursive' ti_target subject visited = do
+    graph <- get
+    ttyr <- mget_tyConRec ti_target
+    let tc = tyr_tyCon ttyr
+
+    let is_same = tc == subject
+    let is_visited = elem subject visited
+
+    if not is_same then do
+      if not is_visited then do
+          let sdcs = TyCon.tyConDataCons subject
+          let sargs = concatMap (DataCon.dataConOrigArgTys) sdcs
+          
+          let isrec t = case t of
+                  TyCoRep.TyConApp tc _ -> do
+                    mi <- mtyConRec_index tc
+                    case mi of
+                      Nothing -> return False
+                      Just i -> do
+                        ntyr <- mget_tyConRec i
+                        mis_recursive' ti_target (tyr_tyCon ntyr) (subject : visited)
+                  _ -> return False
+
+          args_rec <- mapM (isrec) sargs
+
+          return $ any (id) args_rec
+      else
+        return False -- visited, not-same tycons are ignored
+    else
+      return True
+
+-- check if tycon at index ti_subject directly or indirectly recuses to
+-- tycon at index ti_target
+mis_recursive :: Int -> TyCon.TyCon -> TyDepMonad (Bool)
+mis_recursive ti_target subject = mis_recursive' ti_target subject []
+
+madd_dataConArg' :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyDepMonad ()
+madd_dataConArg' is@(ti, di) arg_stack ty = do
     graph <- get
     let recs = dep_records graph
-    (tyr, dce) <- mget_tyConRec_dataConRec is
-    let tc = tyr_tyCon tyr
-    let dcs = tyr_dataCons tyr
-    let dc = dce_dataCon dce
-    let args = dce_args dce
 
-    let plainAdd = do
-            let narg = Ty ty
-            let nargs = args ++ [narg]
+    let add_arg istack tyarglist narg =
+            case istack of
+                [] -> return $ tyarglist ++ [narg]
+                h:tail -> do
+                    let (Ty t ntyarglist) = tyarglist !! h
+                    nextntyarglist <- add_arg tail ntyarglist narg
+                    let r = Ty t nextntyarglist
+                    let retlist = replaceNth h r tyarglist
+                    return retlist
+
+    let plainAdd ts = do
+            dce <- mget_dataConRec is
+            let args = dce_args dce
+
+            nargs <- add_arg arg_stack args (Ty ty [])
+
             let ndce = dce { dce_args = nargs }
             mreplace_dataConRec is ndce
 
-    plainAdd
-    -- TODO: recursive add
+            let i = (length nargs) - 1
+            mapM_ (madd_dataConArg' is (arg_stack ++ [i])) ts
+
+    let recAdd i = do
+            dce <- mget_dataConRec is
+            let args = dce_args dce
+
+            nargs <- add_arg arg_stack args (Rec i)
+
+            let ndce = dce { dce_args = nargs }
+            mreplace_dataConRec is ndce
+
+    let add_tyCon tc ts = do
+            ri <- madd_tyCon tc
+            nti <- fromJust <$> mtyConRec_index tc
+
+            case ri of
+                Nothing -> do
+                    isrec <- mis_recursive ti tc
+                    if isrec then
+                        recAdd nti
+                    else
+                        plainAdd ts
+
+                Just i -> recAdd i
         
-    {-
-    TyCoRep.TyVarTy var -> "~" ++ (short_name $ Var.varName var)
-    TyCoRep.AppTy t1 t2 -> concat ["(", show t1, " ", show t2, ")"]
+    let add_ty ty = case ty of
+          TyCoRep.TyConApp tc ts -> add_tyCon tc ts
 
-    TyCoRep.TyConApp tc ts -> s where
-        tcname = "+" ++ (short_name $ TyCon.tyConName tc)
-        args = intercalate " " $ map (show) ts
-        s = "(" ++ tcname ++ " " ++ args ++ ")"
+          TyCoRep.TyVarTy var -> do
+            if Var.isTyVar var then do
+              let t = Var.varType var
+              add_ty t
+            else
+              undefined
+          _ -> undefined
 
-    TyCoRep.FunTy _ t arg -> concat [show t, " -> ", show arg]
+    add_ty ty
+{-
+      TyCoRep.AppTy t1 t2 -> concat ["(", show t1, " ", show t2, ")"]
 
-    TyCoRep.ForAllTy _ _ -> ""
-    TyCoRep.LitTy _ -> ""
-    TyCoRep.CastTy _ _ -> ""
-    TyCoRep.CoercionTy _ -> ""
-    -}
+      TyCoRep.FunTy _ t arg -> concat [show t, " -> ", show arg]
+      TyCoRep.ForAllTy _ _ -> 
+      TyCoRep.LitTy _ -> 
+      TyCoRep.CastTy _ _ -> ""
+      TyCoRep.CoercionTy _ -> ""
+-}
 
     return ()
+    
+
+madd_dataConArg :: (Int, Int) -> TyCoRep.Type -> TyDepMonad ()
+madd_dataConArg is ty = madd_dataConArg' is [] ty
 
 dep_graph_from_tyCon' :: TyCon.TyCon -> TyDepMonad ()
 dep_graph_from_tyCon' tc = do
