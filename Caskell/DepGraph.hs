@@ -25,6 +25,7 @@ import qualified TyCoRep
 import qualified GHC
 import qualified Var
 
+import Debug.Trace
 import Control.Monad.State
 import Data.List
 import Data.List.Split
@@ -48,7 +49,7 @@ mkDepGraphTypeRecord tc = DepGraphTypeRecord
 
 data DepDataConRecordEntry = DepDataConRecordEntry
     { dce_dataCon :: DataCon.DataCon
-    , dce_args :: [RecTy]
+    , dce_args :: [RecTyTc]
     }
 
 mkDepDataConRecordEntry dc = DepDataConRecordEntry
@@ -59,8 +60,19 @@ mkDepDataConRecordEntry dc = DepDataConRecordEntry
 instance Eq DepDataConRecordEntry where
     (==) a b = dce_dataCon a == dce_dataCon b
 
-data RecTy = Ty TyCon.TyCon [RecTy] -- arguments
-           | Rec Int -- int = index in records, ONLY for recursive tycons
+data RecTyTc = Tc TyCon.TyCon [RecTyTc] -- arguments
+             | Rec Int -- int = index in records, ONLY for recursive tycons
+
+instance Show RecTyTc where
+    -- ONLY USE FOR DEBUG
+    show r = case r of
+            Tc tc args -> s' where
+                ts = short_name $ TyCon.tyConName tc 
+                argss = intercalate " " $ map (show) args
+                s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
+
+            Rec i -> ">>" ++ show i
+
 
 type TyDepGraph = DepGraph DepGraphTypeRecord
 
@@ -78,8 +90,8 @@ instance Show TyDepGraph where
 
       -- show one recty
       rectys r = case r of
-                Ty ty args -> s' where
-                    ts = show ty 
+                Tc tc args -> s' where
+                    ts = short_name $ TyCon.tyConName tc 
                     argss = intercalate " " $ map (rectys) args
                     s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
 
@@ -158,6 +170,9 @@ replaceNth n newVal (x:xs)
 
 type DepMonad g a = State (DepGraph g) a
 type TyDepMonad a = DepMonad DepGraphTypeRecord a
+
+mtrace :: String -> TyDepMonad ()
+mtrace = flip (trace) (return ())
 
 mget_tyConRec :: Int -> TyDepMonad (DepGraphTypeRecord)
 mget_tyConRec index = do
@@ -310,33 +325,47 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
     graph <- get
     let recs = dep_records graph
 
-    let add_arg istack tyarglist narg =
-            case istack of
-                [] -> return $ tyarglist ++ [narg]
-                h:tail -> do
-                    let (Ty t ntyarglist) = tyarglist !! h
-                    nextntyarglist <- add_arg tail ntyarglist narg
-                    let r = Ty t nextntyarglist
-                    let retlist = replaceNth h r tyarglist
-                    return retlist
+    let get_tc_from_ty ty = case ty of
+          TyCoRep.TyConApp tc ts -> tc
+          TyCoRep.TyVarTy var -> 
+            if Var.isTyVar var then
+                get_tc_from_ty $ Var.varType var
+            else
+                undefined
+          _ -> undefined
 
-    let plainAdd ts = do
+    let tC = get_tc_from_ty ty
+
+    let add_arg istack tcarglist narg =
+            case istack of
+                [] -> return (tcarglist ++ [narg], length tcarglist)
+                h:tail -> do
+                    let f = tcarglist !! h
+                    case f of
+                      Tc t ntcarglist -> do
+                        (nextntcarglist, n) <- add_arg tail ntcarglist narg
+                        let r = Tc t nextntcarglist
+                        let retlist = replaceNth h r tcarglist
+                        return (retlist, n)
+                      Rec _ ->
+                        error "invalid add"
+
+    let plainAdd tc ts = do
             dce <- mget_dataConRec is
             let args = dce_args dce
 
-            nargs <- add_arg arg_stack args (Ty ty [])
+            (nargs, i) <- add_arg arg_stack args (Tc tc [])
 
             let ndce = dce { dce_args = nargs }
             mreplace_dataConRec is ndce
 
-            let i = (length nargs) - 1
             mapM_ (madd_dataConArg' is (arg_stack ++ [i])) ts
 
     let recAdd i = do
             dce <- mget_dataConRec is
             let args = dce_args dce
 
-            nargs <- add_arg arg_stack args (Rec i)
+            (nargs, _) <- add_arg arg_stack args (Rec i)
 
             let ndce = dce { dce_args = nargs }
             mreplace_dataConRec is ndce
@@ -345,15 +374,11 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
             ri <- madd_tyCon tc
             nti <- fromJust <$> mtyConRec_index tc
 
-            case ri of
-                Nothing -> do
-                    isrec <- mis_recursive ti tc
-                    if isrec then
-                        recAdd nti
-                    else
-                        plainAdd ts
-
-                Just i -> recAdd i
+            isrec <- mis_recursive ti tc
+            if isrec then
+                recAdd nti
+            else
+                plainAdd tc ts
         
     let add_ty ty = case ty of
           TyCoRep.TyConApp tc ts -> add_tyCon tc ts

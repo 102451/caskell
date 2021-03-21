@@ -203,7 +203,7 @@ hash_algTyCon tc = do
         args_hash <- hash_dataCons_args dcs
         return $ toBytes args_hash
 
-      TyCon.TupleTyCon dc sort -> return $ error "null" ++ toBytes sort -- TODO
+      TyCon.TupleTyCon dc sort -> return $ []-- error "null" ++ toBytes sort -- TODO
       TyCon.SumTyCon dcs _ -> return $ error "null" -- TODO
       TyCon.NewTyCon dc t _ _ _ -> return $ error "null" -- TODO
 

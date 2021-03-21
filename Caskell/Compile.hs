@@ -89,7 +89,7 @@ compile_file file debug_output = do
 compile_file' :: String -> IO ()
 compile_file' file = do
     let ghcCore = GHC.compileToCoreModule file
-    let ghc = ghcCore >>= pretty_print_types
+    let ghc = ghcCore >>= pretty_print_binds
     let ret = run_ghc_with_libpath ghc
     putStrLn =<< ret
     return ()

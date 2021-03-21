@@ -28,7 +28,7 @@ import Caskell.Context
 import Caskell.Compile
 import Caskell.DepGraph
 
-debug_output = True
+debug_output = False
 
 -- utils
 test_header :: Int -> String -> IO ()
