@@ -12,8 +12,6 @@ module Caskell.DepGraph
     TyDepGraph,
     DepGraphTypeRecord(..),
     dep_graph_from_tyCon
-
-
 ) where
 
 import qualified Name
@@ -31,7 +29,7 @@ import Data.List
 import Data.List.Split
 import Data.Maybe
 
-import Caskell.CoreCompare
+import Caskell.Utility
 
 data (Eq a) => DepGraph a = DepGraph
     { dep_records :: [a]
@@ -49,7 +47,7 @@ mkDepGraphTypeRecord tc = DepGraphTypeRecord
 
 data DepDataConRecordEntry = DepDataConRecordEntry
     { dce_dataCon :: DataCon.DataCon
-    , dce_args :: [RecTyTc]
+    , dce_args :: [RecTy]
     }
 
 mkDepDataConRecordEntry dc = DepDataConRecordEntry
@@ -60,16 +58,24 @@ mkDepDataConRecordEntry dc = DepDataConRecordEntry
 instance Eq DepDataConRecordEntry where
     (==) a b = dce_dataCon a == dce_dataCon b
 
-data RecTyTc = Tc TyCon.TyCon [RecTyTc] -- arguments
-             | Rec Int -- int = index in records, ONLY for recursive tycons
+data RecTy = Tc TyCon.TyCon [RecTy] -- arguments
+             | FunTy [RecTy] -- always exactly 2
+             | Rec Int -- int = index in dep_records, ONLY for recursive tycons
 
-instance Show RecTyTc where
+recTy_constructor_order :: RecTy -> Int
+recTy_constructor_order (Tc _ _) = 0
+recTy_constructor_order (FunTy _) = 1
+recTy_constructor_order (Rec _) = 2
+
+instance Show RecTy where
     -- ONLY USE FOR DEBUG
     show r = case r of
             Tc tc args -> s' where
                 ts = short_name $ TyCon.tyConName tc 
                 argss = intercalate " " $ map (show) args
                 s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
+
+            FunTy l -> show (l !! 0) ++ " -> " ++ show (l !! 1)
 
             Rec i -> ">>" ++ show i
 
@@ -94,7 +100,8 @@ instance Show TyDepGraph where
                     ts = short_name $ TyCon.tyConName tc 
                     argss = intercalate " " $ map (rectys) args
                     s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
-
+                
+                FunTy l -> rectys (l !! 0) ++ " -> " ++ rectys (l !! 1)
                 Rec i -> recs i
             
 
@@ -138,14 +145,6 @@ get_record graph index = (dep_records graph !! index)
 record_index :: (Eq a) => DepGraph a -> a -> Maybe Int
 record_index graph r = elemIndex r (dep_records graph)
 
--- selector function
-findIndex_s :: Eq a => (a -> Bool) -> (b -> a) -> [b] -> Maybe Int
-findIndex_s p s l = loop 0 l
-                 where
-                   loop _ [] = Nothing
-                   loop n (x:xs) | p (s x)   = Just n
-                                 | otherwise = loop (n + 1) xs
-
 tyConRec_index :: TyDepGraph -> TyCon.TyCon -> Maybe Int
 tyConRec_index graph tc = findIndex_s (==tc) (tyr_tyCon) (dep_records graph)
 
@@ -160,19 +159,9 @@ dataConRec_index graph dc = do
     return (i1, i2)
 
 -- helper stuff
-short_name = last . splitOn "$" . Name.nameStableString
--- https://stackoverflow.com/a/5852820
-replaceNth :: Int -> a -> [a] -> [a]
-replaceNth _ _ [] = []
-replaceNth n newVal (x:xs)
-   | n == 0 = newVal:xs
-   | otherwise = x:replaceNth (n-1) newVal xs
 
 type DepMonad g a = State (DepGraph g) a
 type TyDepMonad a = DepMonad DepGraphTypeRecord a
-
-mtrace :: String -> TyDepMonad ()
-mtrace = flip (trace) (return ())
 
 mget_tyConRec :: Int -> TyDepMonad (DepGraphTypeRecord)
 mget_tyConRec index = do
@@ -336,7 +325,8 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
 
     let tC = get_tc_from_ty ty
 
-    let add_arg istack tcarglist narg =
+    let add_arg :: [Int] -> [RecTy] -> RecTy -> TyDepMonad ([RecTy], Int)
+        add_arg istack tcarglist narg =
             case istack of
                 [] -> return (tcarglist ++ [narg], length tcarglist)
                 h:tail -> do
@@ -347,10 +337,28 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
                         let r = Tc t nextntcarglist
                         let retlist = replaceNth h r tcarglist
                         return (retlist, n)
-                      Rec _ ->
+
+                      FunTy ntcarglist -> do
+                        (nextntcarglist, n) <- add_arg tail ntcarglist narg
+                        let r = FunTy nextntcarglist
+                        let retlist = replaceNth h r tcarglist
+                        return (retlist, n)
+
+                      _ ->
                         error "invalid add"
 
-    let plainAdd tc ts = do
+    let get_recTy istack arglist =
+            case istack of
+                h:[] -> arglist !! h
+                h:tail -> do
+                    let f = arglist !! h
+                    case f of
+                      Tc _ ntcarglist -> get_recTy tail ntcarglist
+                      FunTy ntcarglist -> get_recTy tail ntcarglist
+                      _ ->
+                        error "invalid index"
+
+    let plainAdd_tyCon tc ts = do
             dce <- mget_dataConRec is
             let args = dce_args dce
 
@@ -360,15 +368,35 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
             mreplace_dataConRec is ndce
 
             mapM_ (madd_dataConArg' is (arg_stack ++ [i])) ts
+            let ret = get_recTy (arg_stack ++ [i]) nargs
+            return ret
+
+    let add_funTy t1 t2 = do
+            dce <- mget_dataConRec is
+            let args = dce_args dce
+            let narg = FunTy []
+
+            (nargs, i) <- add_arg arg_stack args narg
+
+            let ndce = dce { dce_args = nargs }
+            mreplace_dataConRec is ndce
+
+            madd_dataConArg' is (arg_stack ++ [i]) t1
+            madd_dataConArg' is (arg_stack ++ [i]) t2
+
+            let ret = get_recTy (arg_stack ++ [i]) nargs
+            return ret
 
     let recAdd i = do
             dce <- mget_dataConRec is
             let args = dce_args dce
+            let narg = Rec i
 
-            (nargs, _) <- add_arg arg_stack args (Rec i)
+            (nargs, _) <- add_arg arg_stack args narg
 
             let ndce = dce { dce_args = nargs }
             mreplace_dataConRec is ndce
+            return narg
 
     let add_tyCon tc ts = do
             ri <- madd_tyCon tc
@@ -378,7 +406,7 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
             if isrec then
                 recAdd nti
             else
-                plainAdd tc ts
+                plainAdd_tyCon tc ts
         
     let add_ty ty = case ty of
           TyCoRep.TyConApp tc ts -> add_tyCon tc ts
@@ -389,24 +417,94 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
               add_ty t
             else
               undefined
+
+          TyCoRep.FunTy _ t1 t2 -> do
+            add_funTy t1 t2
+
+          TyCoRep.LitTy tl -> do
+            error "fug"
           _ -> undefined
 
     add_ty ty
 {-
-      TyCoRep.AppTy t1 t2 -> concat ["(", show t1, " ", show t2, ")"]
-
-      TyCoRep.FunTy _ t arg -> concat [show t, " -> ", show arg]
+      TyCoRep.AppTy t1 t2 -> 
+      TyCoRep.FunTy _ t arg ->
       TyCoRep.ForAllTy _ _ -> 
       TyCoRep.LitTy _ -> 
-      TyCoRep.CastTy _ _ -> ""
-      TyCoRep.CoercionTy _ -> ""
+      TyCoRep.CastTy _ _ ->
+      TyCoRep.CoercionTy _ ->
 -}
 
     return ()
-    
 
 madd_dataConArg :: (Int, Int) -> TyCoRep.Type -> TyDepMonad ()
 madd_dataConArg is ty = madd_dataConArg' is [] ty
+
+-- sorts the datacons of the tycons, NOT the tycons
+msort :: TyDepMonad ()
+msort = do
+    graph <- get
+    let tyrs = dep_records graph
+
+    ntyrs <- mapM msort_tyr tyrs
+
+    put $ graph { dep_records = ntyrs }
+    return ()
+
+msort_tyr :: DepGraphTypeRecord -> TyDepMonad (DepGraphTypeRecord)
+msort_tyr tyr = do
+    let dces = tyr_dataCons tyr
+    ndces <- msort_dces dces
+    return $ tyr { tyr_dataCons = ndces }
+
+msort_dces :: [DepDataConRecordEntry] -> TyDepMonad [DepDataConRecordEntry]
+msort_dces = sortByM mcompare_dataConRec
+
+mcompare_dataConRec :: DepDataConRecordEntry -> DepDataConRecordEntry -> TyDepMonad (Ordering)
+mcompare_dataConRec l r = do
+    let ldc = dce_dataCon l
+    let rdc = dce_dataCon r
+
+    if ldc == rdc then
+      return EQ
+    else do
+      let largs = dce_args l
+      let rargs = dce_args r
+      let ltag = DataCon.dataConTag ldc
+      let rtag = DataCon.dataConTag rdc
+      
+      cmp1 <- mcompare_dataConRec_args largs rargs
+      let cmp2 = compare ltag rtag
+
+      return $ order [cmp1, cmp2]
+
+mcompare_dataConRec_args :: [RecTy] -> [RecTy] -> TyDepMonad (Ordering)
+mcompare_dataConRec_args []     []     = return EQ
+mcompare_dataConRec_args []     (_:_)  = return LT
+mcompare_dataConRec_args (_:_)  []     = return GT
+mcompare_dataConRec_args (x:xs) (y:ys) = do
+    mcomp <- mcompare_dataConRec_arg x y
+    case mcomp of 
+        EQ    -> mcompare_dataConRec_args xs ys
+        other -> return other
+
+mcompare_dataConRec_arg :: RecTy -> RecTy -> TyDepMonad (Ordering)
+mcompare_dataConRec_arg (Tc ltc largs) (Tc rtc rargs) =
+    if ltc == rtc then
+      mcompare_dataConRec_args largs rargs
+    else do
+      li <- mtyConRec_index ltc
+      ri <- mtyConRec_index rtc
+      return $ compare li ri
+
+mcompare_dataConRec_arg (FunTy ll) (FunTy rl) =
+    mcompare_dataConRec_args ll rl
+
+mcompare_dataConRec_arg (Rec i) (Rec j)  = return $ compare i j
+
+mcompare_dataConRec_arg a b =
+    return $ compare (recTy_constructor_order a) (recTy_constructor_order b)
+
 
 dep_graph_from_tyCon' :: TyCon.TyCon -> TyDepMonad ()
 dep_graph_from_tyCon' tc = do
@@ -414,7 +512,7 @@ dep_graph_from_tyCon' tc = do
     let dep = DepGraph { dep_records = [] }
     put dep
     madd_tyCon tc
-    -- TODO: stable sort the datacons
+    msort
     return ()
 
 dep_graph_from_tyCon :: TyCon.TyCon -> TyDepGraph

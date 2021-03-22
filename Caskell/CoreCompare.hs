@@ -25,12 +25,7 @@ import qualified Unique
 import BasicTypes
 
 import Caskell.Hash
-
--- gets the first non-EQ ordering, or EQ if its all EQ or null
-order :: [Ordering] -> Ordering
-order l = o where
-    nl = dropWhile (==EQ) l
-    o = if null nl then EQ else head nl
+import Caskell.Utility
 
 -- stable order of dataCons important for hashing
 instance Ord DataCon.DataCon where

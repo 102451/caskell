@@ -46,7 +46,6 @@ module Caskell.Context
     mdelete_by_unique,
 
 
-    short_name,
     short_hash_data_name,
     short_hash_str,
     short_unique_hash_str,

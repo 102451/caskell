@@ -35,6 +35,7 @@ executable caskell
     Caskell.Context
     Caskell.Tests
     Caskell.DepGraph
+    Caskell.Utility
     Data.Map.MultiKey
 
   default-language:    Haskell2010

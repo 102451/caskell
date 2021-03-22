@@ -49,13 +49,12 @@ import Data.Word
 import FastString
 
 import Caskell.Bytes
+import Caskell.DepGraph
 import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
 import Caskell.CoreCompare
-
-showPpr' :: Outputable a => a -> String
-showPpr' = showSDocUnsafe . ppr
+import Caskell.Utility
 
 null_hash = error "null hash"
 -- null_hash = get_hash ([]::[Int])
@@ -196,6 +195,9 @@ hash_algTyCon tc = do
     let rhsid = typeID rhs
 
     dprint $ typeName rhs
+
+    let graph = dep_graph_from_tyCon tc
+    println $ show graph
 
     rhs_bts <- case rhs of
       TyCon.AbstractTyCon -> return []
