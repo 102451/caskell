@@ -81,8 +81,7 @@ hash_core_hashable coredata name_filter hash_function = do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
                 dprint $ sname ++ " is RECURSIVE"
-                return placeholder_hash
-                --return null_hash
+                return null_hash
             else do
                 dprint $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh
@@ -127,6 +126,7 @@ hash_type_tything (TyCoRep.ATyCon tc) = do
     ret <- hash_tyCon tc
     dprintln ""
     return $ Just ret
+
 hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- TODO: newtype
 hash_type_tything (TyCoRep.AnId _) = return Nothing -- not a type
 hash_type_tything (TyCoRep.AConLike _) = return Nothing -- data constructor, we want TYPES
@@ -152,19 +152,20 @@ hash_tyCon tc = do
                      | True = return null_hash
 
             let tcid = typeID tc
-            let bndrs = TyCon.tyConBinders tc
+            --let bndrs = TyCon.tyConBinders tc
             let kind = TyCon.tyConResKind tc
 
-            bndrs_hashes <- mapM hash_tyConBinder bndrs
-            kind_hash <- hash_type kind
+            --bndrs_hashes <- mapM hash_tyConBinder bndrs
+            --kind_hash <- hash_type kind
             content_hash <- ret'
 
             let tb = toBytes tcid
-            let bndrs_bytes = map (toBytes) bndrs_hashes
-            let kind_bytes = toBytes kind_hash
+            --let bndrs_bytes = map (toBytes) bndrs_hashes
+            --let kind_bytes = toBytes kind_hash
             let content_bytes = toBytes content_hash
 
-            let hsh = get_hash $ tb : bndrs_bytes ++ kind_bytes : [content_bytes]
+            --let hsh = get_hash $ tb : bndrs_bytes ++ kind_bytes : [content_bytes]
+            let hsh = get_hash $ concat $ tb: [content_bytes]
             return hsh
 
     let hash_data = TyCon tc
@@ -182,25 +183,6 @@ hash_tyConBinder (Var.Bndr v vis) = do
 ------------------
 -- DEP GRAPH BLOCK
 ------------------
-instance TypeIDAble DepGraphTypeRecord where
-    typeID = const 0x0A000000
-    typeName = const "DepGraphTypeRecord"
-
-instance TypeIDAble DepDataConRecordEntry where
-    typeID = const 0x0A000001
-    typeName = const "DepDataConRecordEntry"
-
-instance TypeIDAble RecTy where
-    typeID x = case x of
-        Tc _ _  -> 0x0A100000
-        FunTy _ -> 0x0A100001
-        Rec _   -> 0x0A100002
-
-    typeName x = case x of
-        Tc _ _  -> "RecTy.Tc"
-        FunTy _ -> "RecTy.FunTy"
-        Rec _   -> "RecTy.Rec"
-
 hash_tyDepGraph_tc :: TyDepGraph -> TyCon.TyCon -> CtxMonad (Hash)
 hash_tyDepGraph_tc graph tc = do
     let ti = fromJust $ tyConRec_index graph tc
@@ -929,6 +911,25 @@ instance TypeIDAble TyCon.AlgTyConFlav where
       TyCon.UnboxedAlgTyCon _      -> 0x00024001
       TyCon.ClassTyCon _ _         -> 0x00024002
       TyCon.DataFamInstTyCon _ _ _ -> 0x00024003
+
+instance TypeIDAble DepGraphTypeRecord where
+    typeID = const 0x0A000000
+    typeName = const "DepGraphTypeRecord"
+
+instance TypeIDAble DepDataConRecordEntry where
+    typeID = const 0x0A000001
+    typeName = const "DepDataConRecordEntry"
+
+instance TypeIDAble RecTy where
+    typeID x = case x of
+        Tc _ _  -> 0x0A100000
+        FunTy _ -> 0x0A100001
+        Rec _   -> 0x0A100002
+
+    typeName x = case x of
+        Tc _ _  -> "RecTy.Tc"
+        FunTy _ -> "RecTy.FunTy"
+        Rec _   -> "RecTy.Rec"
 
 -- =========================
 -- Binary Serializable stuff

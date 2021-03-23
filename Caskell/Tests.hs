@@ -6,18 +6,12 @@ module Caskell.Tests
     test2,
     test3,
     test4,
+    test5,
     run_tests',
 
     scratch,
     scratch'
 ) where
-
--- TEMPORARY
-import TyCon
-import DataCon
-import TyCoRep
-import Var
--- TEMPORARY END
 
 import Unique
 import Data.Maybe
@@ -228,6 +222,9 @@ test3 = do
 
     assertEqual "hash AA == hash AB" (hash aa) (hash ab)
     assertNotEqual "hash AA /= hash AC" (hash aa) (hash ac)
+    
+    --let graph = ty_depGraph ctx
+    --putStrLn $ show graph
     pass
 
 test4 :: IO ()
@@ -280,12 +277,27 @@ test4 = do
 
     pass
 
+test5 :: IO ()
+test5 = do
+    ctx <- init_test 5 "typeclasses"
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    let c1 = get_hashed_expr "C1"
+    let c2 = get_hashed_expr "C2"
+    let c3 = get_hashed_expr "C3"
+
+    assertEqual "hash C1 == hash C2" (hash c1) (hash c2)
+    assertNotEqual "hash C1 /= hash C3" (hash c1) (hash c3)
+
+    pass
+
 run_tests :: IO ()
 run_tests = do
     test1
     test2
     test3
     test4
+    test5
 
     putStrLn "all tests passed"
 
@@ -306,25 +318,6 @@ scratch = do
     let tc = case hd of
                 TyCon x -> x
                 _ -> undefined
-    {-
-    let dcs = TyCon.tyConDataCons tc
-    let args = concatMap (DataCon.dataConOrigArgTys) dcs
-
-    let add_ty ty = case ty of
-          TyCoRep.TyConApp tc _ -> do
-            putStr $ (short_name $ TyCon.tyConName tc) ++ ", "
-
-          TyCoRep.TyVarTy var -> do
-            if Var.isTyVar var then do
-              let t = Var.varType var
-              add_ty t
-            else
-              undefined
-          _ -> undefined
-
-    mapM_ (add_ty) args
-    putStrLn ""
-    -}
 
     let tdep = dep_graph_from_tyCon tc
     putStrLn $ show tdep

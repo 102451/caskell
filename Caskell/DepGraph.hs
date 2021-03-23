@@ -48,11 +48,13 @@ data (Eq a) => DepGraph a = DepGraph
 
 data DepGraphTypeRecord = DepGraphTypeRecord
     { tyr_tyCon :: TyCon.TyCon
+    , tyr_bndrs :: [RecBinder]
     , tyr_dataCons :: [DepDataConRecordEntry]
     } deriving (Eq)
 
 mkDepGraphTypeRecord tc = DepGraphTypeRecord
     { tyr_tyCon = tc
+    , tyr_bndrs = []
     , tyr_dataCons = []
     }
 
@@ -78,6 +80,12 @@ recTy_constructor_order (Tc _ _) = 0
 recTy_constructor_order (FunTy _) = 1
 recTy_constructor_order (Rec _) = 2
 
+instance Eq RecTy where
+    (==) (Tc ltc ll) (Tc rtc rl) = (ltc == rtc) && (ll == rl)
+    (==) (FunTy ll) (FunTy rl) = (ll == rl)
+    (==) (Rec li) (Rec ri) = (li == ri)
+    (==) _ _ = False
+
 instance Show RecTy where
     -- ONLY USE FOR DEBUG
     show r = case r of
@@ -90,6 +98,16 @@ instance Show RecTy where
 
             Rec i -> ">>" ++ show i
 
+data RecBinder = RecBinder
+    { rbndr_vis :: TyCon.TyConBndrVis
+    , rbndr_ty :: RecTy
+    }
+
+instance Eq RecBinder where
+    (==) a b = (==) (rbndr_ty a) (rbndr_ty b)
+
+instance Show TyCon.TyConBndrVis where
+    show = showPpr'
 
 type TyDepGraph = DepGraph DepGraphTypeRecord
 
@@ -123,11 +141,18 @@ instance Show TyDepGraph where
             argss = intercalate " " $ map (rectys) (dce_args dcre)
             s' = ds ++ "(" ++ argss ++ ")"
 
+      -- show one binder
+      bndrs bndr = s' where
+            viss = show $ rbndr_vis bndr
+            rs = rectys $ rbndr_ty bndr
+            s' = concat ["(", viss, " ", rs, ")"]
+
       -- show one record
       rs r = s' where
             ts = tcs $ tyr_tyCon r
             dcss = intercalate ", " $ map (dcres) $ tyr_dataCons r
-            s' = ts ++ "<" ++ dcss ++ ">"
+            bndrss = intercalate ", " $ map (bndrs) $ tyr_bndrs r
+            s' = concat [ts, "{", bndrss, "}", "<", dcss, ">"]
             
       records = map rs tyr
       s = "[ " ++ intercalate "\n, " records ++ "\n]"
@@ -268,11 +293,110 @@ madd_tyCon tc = do
         let nrec = mkDepGraphTypeRecord tc
         i <- madd_tyRec nrec
 
+        let bndrs = TyCon.tyConBinders tc
+        mapM_ (madd_tyConBinder i) bndrs
+
         let dcs = TyCon.tyConDataCons tc
         mapM_ (madd_dataCon i) dcs
         return Nothing
 
       Just i -> return mi
+
+type BndrIndex = (TyCon.TyConBndrVis, Int)
+
+madd_tyConBinder' :: BndrIndex -> [Int] -> TyCoRep.Type -> TyDepMonad ()
+madd_tyConBinder' vs arg_stack ty = do
+    mbndr_add_ty vs arg_stack ty
+
+    return ()
+
+madd_tyConBinder :: Int -> TyCon.TyConBinder -> TyDepMonad ()
+madd_tyConBinder ti (Var.Bndr var vis) = do
+    let ty = Var.varType var
+    madd_tyConBinder' (vis, ti) [] ty
+
+mbndr_add_ty :: BndrIndex -> [Int] -> TyCoRep.Type -> TyDepMonad (RecTy)
+mbndr_add_ty vs@(_, ti) arg_stack ty = do
+    case ty of
+        TyCoRep.TyConApp tc ts ->
+          mbndr_add_tyCon vs arg_stack tc ts
+
+        TyCoRep.TyVarTy v -> do
+          if Var.isTyVar v then do
+            let t = Var.varType v
+            mbndr_add_ty vs arg_stack t
+          else
+            undefined
+
+        TyCoRep.FunTy _ t1 t2 -> do
+          mbndr_add_funTy vs arg_stack t1 t2
+
+        --TyCoRep.LitTy tl -> do
+        _ -> undefined
+
+mbndr_add_tyCon :: BndrIndex -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
+mbndr_add_tyCon vs@(_, ti) arg_stack tc ts = do
+    ri <- madd_tyCon tc
+    nti <- fromJust <$> mtyConRec_index tc
+
+    isrec <- mis_recursive ti tc
+    if isrec then
+        mbndr_add_rec vs arg_stack nti
+    else
+        mbndr_plain_add_tyCon vs arg_stack tc ts
+
+mbndr_add_new_recTy :: BndrIndex -> [Int] -> RecTy -> TyDepMonad ([RecTy], Int)
+mbndr_add_new_recTy vs@(vis, ti) arg_stack nrec = do
+    tyr <- mget_tyConRec ti
+    let tbndrs = tyr_bndrs tyr
+    let bndrs = map (rbndr_ty) tbndrs
+
+    (nbndrs', i) <- mrec_add_recTy arg_stack bndrs nrec
+
+    let nbndr' = last nbndrs'
+    let nbndr = RecBinder { rbndr_vis = vis, rbndr_ty = nbndr' }
+
+    let ntbndrs = tbndrs ++ [nbndr]
+    let ntyr = tyr { tyr_bndrs = ntbndrs }
+    mreplace_tyRec ti ntyr
+    return (nbndrs', i)
+
+mbndr_plain_add_tyCon :: BndrIndex -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
+mbndr_plain_add_tyCon vs@(_, ti) arg_stack tc ts = do
+    let nbndr = Tc tc []
+    (nargs, i) <- mbndr_add_new_recTy vs arg_stack nbndr
+
+    mapM_ (madd_tyConBinder' vs (arg_stack ++ [i])) ts
+
+    tyr <- mget_tyConRec ti
+    let tbndrs = tyr_bndrs tyr
+    let bndrs = map (rbndr_ty) tbndrs
+
+    let ret = get_recTy (arg_stack ++ [i]) bndrs
+    return ret
+
+mbndr_add_funTy :: BndrIndex -> [Int] -> TyCoRep.Type -> TyCoRep.Type -> TyDepMonad (RecTy)
+mbndr_add_funTy vs@(_, ti) arg_stack t1 t2 = do
+    let nbndr = FunTy []
+
+    (_, i) <- mbndr_add_new_recTy vs arg_stack nbndr
+    tyr <- mget_tyConRec ti
+
+    madd_tyConBinder' vs (arg_stack ++ [i]) t1
+    madd_tyConBinder' vs (arg_stack ++ [i]) t2
+
+    tyr <- mget_tyConRec ti
+    let tbndrs = tyr_bndrs tyr
+    let bndrs = map (rbndr_ty) tbndrs
+
+    let ret = get_recTy (arg_stack ++ [i]) bndrs
+    return ret
+
+mbndr_add_rec :: BndrIndex -> [Int] -> Int -> TyDepMonad (RecTy)
+mbndr_add_rec vs arg_stack i = do
+    let nbndr = Rec i
+    mbndr_add_new_recTy vs arg_stack nbndr
+    return nbndr
     
 -- index of tyCon for datacon
 madd_dataCon :: Int -> DataCon.DataCon -> TyDepMonad ()
@@ -281,7 +405,6 @@ madd_dataCon ti dc = do
     let recs = dep_records graph
     tyr <- mget_tyConRec ti
 
-    let tc = tyr_tyCon tyr
     let dcs = tyr_dataCons tyr
 
     let mi = findIndex_s (==dc) (dce_dataCon) dcs
@@ -333,120 +456,105 @@ mis_recursive' ti_target subject visited = do
 mis_recursive :: Int -> TyCon.TyCon -> TyDepMonad (Bool)
 mis_recursive ti_target subject = mis_recursive' ti_target subject []
 
+mrec_add_recTy :: [Int] -> [RecTy] -> RecTy -> TyDepMonad ([RecTy], Int)
+mrec_add_recTy istack tcarglist narg =
+    case istack of
+        [] -> return (tcarglist ++ [narg], length tcarglist)
+        h:tail -> do
+            let f = tcarglist !! h
+            case f of
+              Tc t ntcarglist -> do
+                (nextntcarglist, n) <- mrec_add_recTy tail ntcarglist narg
+                let r = Tc t nextntcarglist
+                let retlist = replaceNth h r tcarglist
+                return (retlist, n)
+
+              FunTy ntcarglist -> do
+                (nextntcarglist, n) <- mrec_add_recTy tail ntcarglist narg
+                let r = FunTy nextntcarglist
+                let retlist = replaceNth h r tcarglist
+                return (retlist, n)
+
+              _ ->
+                error "invalid add"
+
+mrec_add_new_recTy :: (Int, Int) -> [Int] -> RecTy -> TyDepMonad ([RecTy], Int)
+mrec_add_new_recTy is arg_stack nrec = do
+    dce <- mget_dataConRec is
+    let args = dce_args dce
+
+    (nargs, i) <- mrec_add_recTy arg_stack args (nrec)
+
+    let ndce = dce { dce_args = nargs }
+    mreplace_dataConRec is ndce
+    return (nargs, i)
+
+mrec_plain_add_tyCon :: (Int, Int) -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
+mrec_plain_add_tyCon is arg_stack tc ts = do
+    let nrec = Tc tc []
+    (nargs, i) <- mrec_add_new_recTy is arg_stack nrec
+
+    mapM_ (madd_dataConArg' is (arg_stack ++ [i])) ts
+    let ret = get_recTy (arg_stack ++ [i]) nargs
+    return ret
+
+mrec_add_funTy :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyCoRep.Type -> TyDepMonad (RecTy)
+mrec_add_funTy is arg_stack t1 t2 = do
+    let nrec = FunTy []
+    (_, i) <- mrec_add_new_recTy is arg_stack nrec
+    dce <- mget_dataConRec is
+
+    madd_dataConArg' is (arg_stack ++ [i]) t1
+    madd_dataConArg' is (arg_stack ++ [i]) t2
+
+    dce <- mget_dataConRec is
+    let nargs = dce_args dce
+
+    let ret = get_recTy (arg_stack ++ [i]) nargs
+    return ret
+
+mrec_add_rec :: (Int, Int) -> [Int] -> Int -> TyDepMonad (RecTy)
+mrec_add_rec is arg_stack i = do
+    let nrec = Rec i
+    (_, i) <- mrec_add_new_recTy is arg_stack nrec
+    dce <- mget_dataConRec is
+
+    return nrec
+
+mrec_add_tyCon :: (Int, Int) -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
+mrec_add_tyCon is@(ti, di) arg_stack tc ts = do
+    ri <- madd_tyCon tc
+    nti <- fromJust <$> mtyConRec_index tc
+
+    isrec <- mis_recursive ti tc
+    if isrec then
+        mrec_add_rec is arg_stack nti
+    else
+        mrec_plain_add_tyCon is arg_stack tc ts
+        
+mrec_add_ty :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyDepMonad (RecTy)
+mrec_add_ty is arg_stack ty = case ty of
+    TyCoRep.TyConApp tc ts -> mrec_add_tyCon is arg_stack tc ts
+
+    TyCoRep.TyVarTy var -> do
+      if Var.isTyVar var then do
+        let t = Var.varType var
+        mrec_add_ty is arg_stack t
+      else
+        undefined
+
+    TyCoRep.FunTy _ t1 t2 -> do
+      mrec_add_funTy is arg_stack t1 t2
+
+    --TyCoRep.LitTy tl -> do
+    _ -> undefined
+
 madd_dataConArg' :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyDepMonad ()
 madd_dataConArg' is@(ti, di) arg_stack ty = do
     graph <- get
     let recs = dep_records graph
 
-    let get_tc_from_ty ty = case ty of
-          TyCoRep.TyConApp tc ts -> tc
-          TyCoRep.TyVarTy var -> 
-            if Var.isTyVar var then
-                get_tc_from_ty $ Var.varType var
-            else
-                undefined
-          _ -> undefined
-
-    let tC = get_tc_from_ty ty
-
-    let add_arg :: [Int] -> [RecTy] -> RecTy -> TyDepMonad ([RecTy], Int)
-        add_arg istack tcarglist narg =
-            case istack of
-                [] -> return (tcarglist ++ [narg], length tcarglist)
-                h:tail -> do
-                    let f = tcarglist !! h
-                    case f of
-                      Tc t ntcarglist -> do
-                        (nextntcarglist, n) <- add_arg tail ntcarglist narg
-                        let r = Tc t nextntcarglist
-                        let retlist = replaceNth h r tcarglist
-                        return (retlist, n)
-
-                      FunTy ntcarglist -> do
-                        (nextntcarglist, n) <- add_arg tail ntcarglist narg
-                        let r = FunTy nextntcarglist
-                        let retlist = replaceNth h r tcarglist
-                        return (retlist, n)
-
-                      _ ->
-                        error "invalid add"
-
-    let plainAdd_tyCon tc ts = do
-            dce <- mget_dataConRec is
-            let args = dce_args dce
-
-            (nargs, i) <- add_arg arg_stack args (Tc tc [])
-
-            let ndce = dce { dce_args = nargs }
-            mreplace_dataConRec is ndce
-
-            mapM_ (madd_dataConArg' is (arg_stack ++ [i])) ts
-            let ret = get_recTy (arg_stack ++ [i]) nargs
-            return ret
-
-    let add_funTy t1 t2 = do
-            dce <- mget_dataConRec is
-            let args = dce_args dce
-            let narg = FunTy []
-
-            (nargs, i) <- add_arg arg_stack args narg
-
-            let ndce = dce { dce_args = nargs }
-            mreplace_dataConRec is ndce
-
-            madd_dataConArg' is (arg_stack ++ [i]) t1
-            madd_dataConArg' is (arg_stack ++ [i]) t2
-
-            let ret = get_recTy (arg_stack ++ [i]) nargs
-            return ret
-
-    let recAdd i = do
-            dce <- mget_dataConRec is
-            let args = dce_args dce
-            let narg = Rec i
-
-            (nargs, _) <- add_arg arg_stack args narg
-
-            let ndce = dce { dce_args = nargs }
-            mreplace_dataConRec is ndce
-            return narg
-
-    let add_tyCon tc ts = do
-            ri <- madd_tyCon tc
-            nti <- fromJust <$> mtyConRec_index tc
-
-            isrec <- mis_recursive ti tc
-            if isrec then
-                recAdd nti
-            else
-                plainAdd_tyCon tc ts
-        
-    let add_ty ty = case ty of
-          TyCoRep.TyConApp tc ts -> add_tyCon tc ts
-
-          TyCoRep.TyVarTy var -> do
-            if Var.isTyVar var then do
-              let t = Var.varType var
-              add_ty t
-            else
-              undefined
-
-          TyCoRep.FunTy _ t1 t2 -> do
-            add_funTy t1 t2
-
-          TyCoRep.LitTy tl -> do
-            error "fug"
-          _ -> undefined
-
-    add_ty ty
-{-
-      TyCoRep.AppTy t1 t2 -> 
-      TyCoRep.FunTy _ t arg ->
-      TyCoRep.ForAllTy _ _ -> 
-      TyCoRep.LitTy _ -> 
-      TyCoRep.CastTy _ _ ->
-      TyCoRep.CoercionTy _ ->
--}
+    mrec_add_ty is arg_stack ty
 
     return ()
 
