@@ -71,6 +71,7 @@ import Data.List.Split
 import Data.Map.MultiKey
 import Data.Maybe
 import Caskell.Bytes
+import Caskell.DepGraph
 import Caskell.Hash
 
 default_print = True
@@ -78,6 +79,9 @@ default_print = True
 data Context = Ctx
     { unique_hashes :: UniqueHashMap
     , mod_guts :: GHC.CoreModule
+
+    -- contains all type definitions used by the module
+    , ty_depGraph :: TyDepGraph
     , debug :: Bool
     }
 
@@ -87,6 +91,7 @@ instance Show Context where
 mkCtx = Ctx {
 unique_hashes = empty,
 mod_guts = undefined,
+ty_depGraph = emptyTyDepGraph,
 debug = default_print
 }
 

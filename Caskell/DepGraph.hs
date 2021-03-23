@@ -11,6 +11,11 @@ module Caskell.DepGraph
 
     TyDepGraph,
     DepGraphTypeRecord(..),
+    DepDataConRecordEntry(..),
+    RecTy(..),
+
+    emptyTyDepGraph,
+    dep_add_tyCon,
     dep_graph_from_tyCon
 ) where
 
@@ -82,6 +87,7 @@ instance Show RecTy where
 
 type TyDepGraph = DepGraph DepGraphTypeRecord
 
+emptyTyDepGraph :: TyDepGraph
 emptyTyDepGraph = DepGraph {
     dep_records = []
 }
@@ -473,10 +479,11 @@ mcompare_dataConRec l r = do
       let ltag = DataCon.dataConTag ldc
       let rtag = DataCon.dataConTag rdc
       
-      cmp1 <- mcompare_dataConRec_args largs rargs
-      let cmp2 = compare ltag rtag
+      let cmp1 = compare (length largs) (length rargs)
+      cmp2 <- mcompare_dataConRec_args largs rargs
+      let cmp3 = compare ltag rtag
 
-      return $ order [cmp1, cmp2]
+      return $ order [cmp1, cmp2, cmp3]
 
 mcompare_dataConRec_args :: [RecTy] -> [RecTy] -> TyDepMonad (Ordering)
 mcompare_dataConRec_args []     []     = return EQ
@@ -495,7 +502,12 @@ mcompare_dataConRec_arg (Tc ltc largs) (Tc rtc rargs) =
     else do
       li <- mtyConRec_index ltc
       ri <- mtyConRec_index rtc
-      return $ compare li ri
+      if li == ri then
+        return EQ
+      else do
+        ltyr <- mget_tyConRec $ fromJust li
+        rtyr <- mget_tyConRec $ fromJust ri
+        mcompare_typeRecord ltyr rtyr
 
 mcompare_dataConRec_arg (FunTy ll) (FunTy rl) =
     mcompare_dataConRec_args ll rl
@@ -505,15 +517,39 @@ mcompare_dataConRec_arg (Rec i) (Rec j)  = return $ compare i j
 mcompare_dataConRec_arg a b =
     return $ compare (recTy_constructor_order a) (recTy_constructor_order b)
 
+mcompare_typeRecord :: DepGraphTypeRecord -> DepGraphTypeRecord -> TyDepMonad (Ordering)
+mcompare_typeRecord a b =
+    if a == b then
+      return EQ
+    else do
+      let adc = tyr_dataCons a
+      let bdc = tyr_dataCons b
 
-dep_graph_from_tyCon' :: TyCon.TyCon -> TyDepMonad ()
-dep_graph_from_tyCon' tc = do
-    let tyrec = DepGraphTypeRecord { tyr_tyCon = tc, tyr_dataCons = [] }
-    let dep = DepGraph { dep_records = [] }
-    put dep
+      let lencmp = compare (length adc) (length bdc)
+
+      if lencmp == EQ then
+        mcompare_dataConRecs (tyr_dataCons a) (tyr_dataCons b)
+      else
+        return lencmp
+
+mcompare_dataConRecs :: [DepDataConRecordEntry] -> [DepDataConRecordEntry] -> TyDepMonad (Ordering)
+mcompare_dataConRecs []     []     = return EQ
+mcompare_dataConRecs []     (_:_)  = return LT
+mcompare_dataConRecs (_:_)  []     = return GT
+mcompare_dataConRecs (x:xs) (y:ys) = do
+    mcomp <- mcompare_dataConRec x y
+    case mcomp of 
+        EQ    -> mcompare_dataConRecs xs ys
+        other -> return other
+
+dep_add_tyCon' :: TyCon.TyCon -> TyDepMonad ()
+dep_add_tyCon' tc = do
     madd_tyCon tc
     msort
     return ()
 
+dep_add_tyCon :: TyDepGraph -> TyCon.TyCon -> TyDepGraph
+dep_add_tyCon graph tc = execState (dep_add_tyCon' tc) graph
+
 dep_graph_from_tyCon :: TyCon.TyCon -> TyDepGraph
-dep_graph_from_tyCon tc = execState (dep_graph_from_tyCon' tc) emptyTyDepGraph
+dep_graph_from_tyCon = dep_add_tyCon emptyTyDepGraph

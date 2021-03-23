@@ -81,7 +81,7 @@ hash_core_hashable coredata name_filter hash_function = do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
                 dprint $ sname ++ " is RECURSIVE"
-                return $ placeholder_hash -- TODO: CHANGE TO NULL_HASH
+                return null_hash
             else do
                 dprint $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh

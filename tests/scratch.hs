@@ -9,4 +9,6 @@
 data T1 = A (Int -> T2) | B (T2 -> T1 -> T2 -> T1) | C T2 T1 T2 T1
 data T2 = X | Y
 
+--data T1 = A | B Int | C T1 Int | D (Char -> T1 -> Int) | E (T1, Float)
+
 main = undefined
