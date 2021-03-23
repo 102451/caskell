@@ -13,6 +13,7 @@ module Caskell.DepGraph
     DepGraphTypeRecord(..),
     DepDataConRecordEntry(..),
     RecTy(..),
+    RecBinder(..),
 
     emptyTyDepGraph,
     dep_add_tyCon,

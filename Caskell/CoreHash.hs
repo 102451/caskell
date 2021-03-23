@@ -152,15 +152,12 @@ hash_tyCon tc = do
                      | True = return null_hash
 
             let tcid = typeID tc
-            --let bndrs = TyCon.tyConBinders tc
             let kind = TyCon.tyConResKind tc
 
-            --bndrs_hashes <- mapM hash_tyConBinder bndrs
             --kind_hash <- hash_type kind
             content_hash <- ret'
 
             let tb = toBytes tcid
-            --let bndrs_bytes = map (toBytes) bndrs_hashes
             --let kind_bytes = toBytes kind_hash
             let content_bytes = toBytes content_hash
 
@@ -188,11 +185,27 @@ hash_tyDepGraph_tc graph tc = do
     let ti = fromJust $ tyConRec_index graph tc
     let tyr = dep_records graph !! ti
 
+    let bndrs = tyr_bndrs tyr
     let dces = tyr_dataCons tyr
+    bndrs_hashes <- mapM (hash_tyDepGraph_bndr graph) bndrs
     dces_hashes <- mapM (hash_tyDepGraph_dce graph) dces
 
+    let bndrs_bytes = map (toBytes) bndrs_hashes
     let dces_bytes = map (toBytes) dces_hashes
     return $ get_hash dces_bytes
+    
+hash_tyDepGraph_bndr :: TyDepGraph -> RecBinder -> CtxMonad (Hash)
+hash_tyDepGraph_bndr graph bndr = do
+    let vis = rbndr_vis bndr
+    let recTy = rbndr_ty bndr
+    let tid = toBytes $ typeID bndr
+
+    recTy_hash <- hash_tyDepGraph_recTy graph recTy
+
+    let recTy_bts = toBytes recTy_hash
+    let visbts = uniqueBytes vis
+
+    return $ get_hash (concat [tid, visbts, recTy_bts])
     
 hash_tyDepGraph_dce :: TyDepGraph -> DepDataConRecordEntry -> CtxMonad (Hash)
 hash_tyDepGraph_dce graph dce = do
@@ -920,6 +933,10 @@ instance TypeIDAble DepDataConRecordEntry where
     typeID = const 0x0A000001
     typeName = const "DepDataConRecordEntry"
 
+instance TypeIDAble RecBinder where
+    typeID = const 0x0A000002
+    typeName = const "RecBinder"
+
 instance TypeIDAble RecTy where
     typeID x = case x of
         Tc _ _  -> 0x0A100000
@@ -930,6 +947,7 @@ instance TypeIDAble RecTy where
         Tc _ _  -> "RecTy.Tc"
         FunTy _ -> "RecTy.FunTy"
         Rec _   -> "RecTy.Rec"
+
 
 -- =========================
 -- Binary Serializable stuff
