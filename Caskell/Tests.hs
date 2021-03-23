@@ -28,7 +28,7 @@ import Caskell.Context
 import Caskell.Compile
 import Caskell.DepGraph
 
-debug_output = True
+debug_output = False
 
 -- utils
 test_header :: Int -> String -> IO ()
@@ -215,6 +215,19 @@ test3 = do
     assertNotEqual "hash W /= hash Y" (hash w) (hash y)
     assertNotEqual "hash X /= hash Z" (hash x) (hash z)
 
+    let t15 = get_hashed_expr "T15"
+    let t16 = get_hashed_expr "T16"
+    let t17 = get_hashed_expr "T17"
+
+    assertEqual "hash T15 == hash T16" (hash t15) (hash t16)
+    assertNotEqual "hash T15 /= hash T17" (hash t15) (hash t17)
+
+    let aa = get_hashed_expr "AA"
+    let ab = get_hashed_expr "AB"
+    let ac = get_hashed_expr "AC"
+
+    assertEqual "hash AA == hash AB" (hash aa) (hash ab)
+    assertNotEqual "hash AA /= hash AC" (hash aa) (hash ac)
     pass
 
 test4 :: IO ()
@@ -248,16 +261,22 @@ test4 = do
 
     let t4 = get_hashed_expr "T4"
     let t5 = get_hashed_expr "T5"
+    let t6 = get_hashed_expr "T5"
 
     assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
+    assertEqual "hash T5 == hash T6" (hash t5) (hash t6)
+    assertEqual "hash T6 == hash T4" (hash t6) (hash t4)
 
     let e = get_hashed_expr "E"
     let f = get_hashed_expr "F"
     let g = get_hashed_expr "G"
     let h = get_hashed_expr "H"
+    let i = get_hashed_expr "I"
+    let j = get_hashed_expr "J"
 
     assertEqual "hash E == hash G" (hash e) (hash g)
     assertEqual "hash F == hash H" (hash f) (hash h)
+    assertEqual "hash H == hash I" (hash h) (hash i)
 
     pass
 

@@ -16,7 +16,13 @@ module Caskell.DepGraph
 
     emptyTyDepGraph,
     dep_add_tyCon,
-    dep_graph_from_tyCon
+    dep_graph_from_tyCon,
+
+    get_record,
+    record_index,
+    tyConRec_index,
+    dataConRec_index,
+    get_recTy
 ) where
 
 import qualified Name
@@ -163,6 +169,18 @@ dataConRec_index graph dc = do
 
     i2 <- findIndex_s (==dc) (dce_dataCon) dcs
     return (i1, i2)
+
+get_recTy :: [Int] -> [RecTy] -> RecTy
+get_recTy istack arglist =
+    case istack of
+        h:[] -> arglist !! h
+        h:tail -> r where
+            f = arglist !! h
+            r = case f of
+                  Tc _ ntcarglist -> get_recTy tail ntcarglist
+                  FunTy ntcarglist -> get_recTy tail ntcarglist
+                  _ ->
+                    error "invalid index"
 
 -- helper stuff
 
@@ -352,17 +370,6 @@ madd_dataConArg' is@(ti, di) arg_stack ty = do
 
                       _ ->
                         error "invalid add"
-
-    let get_recTy istack arglist =
-            case istack of
-                h:[] -> arglist !! h
-                h:tail -> do
-                    let f = arglist !! h
-                    case f of
-                      Tc _ ntcarglist -> get_recTy tail ntcarglist
-                      FunTy ntcarglist -> get_recTy tail ntcarglist
-                      _ ->
-                        error "invalid index"
 
     let plainAdd_tyCon tc ts = do
             dce <- mget_dataConRec is

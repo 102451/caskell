@@ -23,6 +23,8 @@ module Caskell.Context
     set_hashes,
     get_mod_guts,
     set_mod_guts,
+    get_ty_depGraph,
+    set_ty_depGraph,
     is_debug,
     set_debug,
 
@@ -45,6 +47,7 @@ module Caskell.Context
     mdelete_by_hash,
     mdelete_by_unique,
 
+    mdep_add_tyCon,
 
     short_hash_data_name,
     short_hash_str,
@@ -227,6 +230,12 @@ get_mod_guts = state $ \ctx -> (mod_guts ctx, ctx)
 set_mod_guts :: GHC.CoreModule -> CtxMonad ()
 set_mod_guts guts = state $ \ctx -> ((), ctx { mod_guts = guts })
 
+get_ty_depGraph :: CtxMonad (TyDepGraph)
+get_ty_depGraph = state $ \ctx -> (ty_depGraph ctx, ctx)
+
+set_ty_depGraph :: TyDepGraph -> CtxMonad ()
+set_ty_depGraph tdg = state $ \ctx -> ((), ctx { ty_depGraph = tdg })
+
 is_debug :: CtxMonad Bool
 is_debug = state $ \ctx -> (debug ctx, ctx)
 
@@ -347,6 +356,12 @@ mdelete_by_unique u = do
                             Data.Map.MultiKey.insert uq hashes
         
     set_hashes newhashes
+
+mdep_add_tyCon :: TyCon.TyCon -> CtxMonad ()
+mdep_add_tyCon tc = do
+    graph <- get_ty_depGraph
+    let ngraph = dep_add_tyCon graph tc
+    set_ty_depGraph ngraph
 
 -- utility
 print :: String -> CtxMonad ()

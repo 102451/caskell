@@ -81,7 +81,8 @@ hash_core_hashable coredata name_filter hash_function = do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
                 dprint $ sname ++ " is RECURSIVE"
-                return null_hash
+                return placeholder_hash
+                --return null_hash
             else do
                 dprint $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh
@@ -178,6 +179,73 @@ hash_tyConBinder (Var.Bndr v vis) = do
 
     return $ get_hash (visb ++ toBytes vhash)
 
+------------------
+-- DEP GRAPH BLOCK
+------------------
+instance TypeIDAble DepGraphTypeRecord where
+    typeID = const 0x0A000000
+    typeName = const "DepGraphTypeRecord"
+
+instance TypeIDAble DepDataConRecordEntry where
+    typeID = const 0x0A000001
+    typeName = const "DepDataConRecordEntry"
+
+instance TypeIDAble RecTy where
+    typeID x = case x of
+        Tc _ _  -> 0x0A100000
+        FunTy _ -> 0x0A100001
+        Rec _   -> 0x0A100002
+
+    typeName x = case x of
+        Tc _ _  -> "RecTy.Tc"
+        FunTy _ -> "RecTy.FunTy"
+        Rec _   -> "RecTy.Rec"
+
+hash_tyDepGraph_tc :: TyDepGraph -> TyCon.TyCon -> CtxMonad (Hash)
+hash_tyDepGraph_tc graph tc = do
+    let ti = fromJust $ tyConRec_index graph tc
+    let tyr = dep_records graph !! ti
+
+    let dces = tyr_dataCons tyr
+    dces_hashes <- mapM (hash_tyDepGraph_dce graph) dces
+
+    let dces_bytes = map (toBytes) dces_hashes
+    return $ get_hash dces_bytes
+    
+hash_tyDepGraph_dce :: TyDepGraph -> DepDataConRecordEntry -> CtxMonad (Hash)
+hash_tyDepGraph_dce graph dce = do
+    let args = dce_args dce
+    let tid = toBytes $ typeID dce
+    bts <- hashbytes_tyDepGraph_recTys graph args
+
+    return $ get_hash (tid ++ bts)
+
+hashbytes_tyDepGraph_recTys :: TyDepGraph -> [RecTy] -> CtxMonad (Bytes)
+hashbytes_tyDepGraph_recTys graph l = do
+    recTy_hashes <- mapM (hash_tyDepGraph_recTy graph) l
+
+    let recTy_bytes = concatMap (toBytes) recTy_hashes
+    return recTy_bytes
+    
+hash_tyDepGraph_recTy :: TyDepGraph -> RecTy -> CtxMonad (Hash)
+hash_tyDepGraph_recTy graph rec = do
+    let tid = toBytes $ typeID rec
+    bts <- case rec of
+             Tc tc args -> do
+               tchash <- hash_tyCon tc
+               argbytes <- hashbytes_tyDepGraph_recTys graph args
+
+               return $ concat [toBytes tchash, argbytes]
+
+             FunTy args -> do
+               argbytes <- hashbytes_tyDepGraph_recTys graph args
+               return argbytes
+
+             Rec i -> return $ toBytes i
+
+    let hsh = get_hash (concat [tid, bts])
+    return hsh
+
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_funTyCon tc = do
@@ -194,22 +262,18 @@ hash_algTyCon tc = do
     let rhs = TyCon.algTyConRhs tc
     let rhsid = typeID rhs
 
-    dprint $ typeName rhs
+    mdep_add_tyCon tc
 
     let graph = dep_graph_from_tyCon tc
-    println $ show graph
 
-    rhs_bts <- case rhs of
-      TyCon.AbstractTyCon -> return []
-      TyCon.DataTyCon dcs _ _ -> do
-        args_hash <- hash_dataCons_args dcs
-        return $ toBytes args_hash
-
-      TyCon.TupleTyCon dc sort -> return $ []-- error "null" ++ toBytes sort -- TODO
-      TyCon.SumTyCon dcs _ -> return $ error "null" -- TODO
+    extra_bts <- case rhs of
+      TyCon.TupleTyCon _ sort -> return $ toBytes sort
       TyCon.NewTyCon dc t _ _ _ -> return $ error "null" -- TODO
+      _ -> return []
 
-    let bts = toBytes rhsid ++ rhs_bts
+    graph_hash <- hash_tyDepGraph_tc graph tc
+
+    let bts = toBytes rhsid ++ toBytes graph_hash ++ extra_bts
     return $ get_hash bts
 
 -- this gets the type, order and number of data constructor arguments
