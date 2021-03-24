@@ -232,8 +232,12 @@ test3 = do
     assertEqual "hash AA == hash AB" (hash aa) (hash ab)
     assertNotEqual "hash AA /= hash AC" (hash aa) (hash ac)
     
-    --let graph = ty_depGraph ctx
-    --putStrLn $ show graph
+    let t18 = get_hashed_expr "T18"
+    let t19 = get_hashed_expr "T19"
+    let t20 = get_hashed_expr "T20"
+
+    assertEqual "hash T18 == hash T19" (hash t18) (hash t19)
+    assertNotEqual "hash T18 == hash T20" (hash t18) (hash t20)
     pass
 
 test4 :: IO ()

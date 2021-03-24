@@ -30,5 +30,11 @@ data T15 = AA (Int, Char)
 data T16 = AB (Int, Char)
 data T17 = AC (Char, Int)
 
+-- record types
+-- T18 and T19 are isomorph
+data T18 = AD { ad_a :: Int, ad_b :: Char }
+data T19 = AE { ae_a :: Int, ae_b :: Char }
+data T20 = AF { af_a :: Char, af_b :: Int } -- order matters
+
 main :: IO ()
 main = return ()

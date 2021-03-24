@@ -515,7 +515,7 @@ hash_expr expr = do
     -- TODO: implement
         CoreSyn.Lam b e -> do
             dprintln "lambda"
-            return $ H null_hash
+            return $ H placeholder_hash
 
     -- TODO: implement
         CoreSyn.Let b e -> do
