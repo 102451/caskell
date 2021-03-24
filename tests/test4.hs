@@ -10,5 +10,12 @@ data T4 = E | F Char T5
 data T5 = G | H Char T6
 data T6 = I Char T4 | J
 
+-- T7 and T9 are NOT isomorph
+data T7 = K | L Int T8
+data T8 = M (Int -> T7)
+
+data T9  = N | O Int T10
+data T10 = P (Float, T9)
+
 main :: IO ()
 main = return ()

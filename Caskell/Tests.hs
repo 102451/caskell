@@ -25,6 +25,15 @@ import Caskell.DepGraph
 debug_output = False
 
 -- utils
+get_tyDepGraph :: UniqueHash -> Maybe TyDepGraph
+get_tyDepGraph uh = do
+    defref <- unique_definition_ref uh
+    let hd = hash_data defref
+    case hd of
+      TyCon tc -> Just $ dep_graph_from_tyCon tc
+      _ -> Nothing
+
+
 test_header :: Int -> String -> IO ()
 test_header num description = do
     putStrLn $ "\ntest " ++ show num ++ ": " ++ description
@@ -258,7 +267,7 @@ test4 = do
 
     let t4 = get_hashed_expr "T4"
     let t5 = get_hashed_expr "T5"
-    let t6 = get_hashed_expr "T5"
+    let t6 = get_hashed_expr "T6"
 
     assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
     assertEqual "hash T5 == hash T6" (hash t5) (hash t6)
@@ -275,6 +284,12 @@ test4 = do
     assertEqual "hash F == hash H" (hash f) (hash h)
     assertEqual "hash H == hash I" (hash h) (hash i)
 
+    let t7 = get_hashed_expr "T7"
+    let t9 = get_hashed_expr "T9"
+
+    putStrLn $ show $ fromJust $ get_tyDepGraph t7
+    putStrLn $ show $ fromJust $ get_tyDepGraph t9
+    assertNotEqual "hash T7 /= hash T9" (hash t7) (hash t9)
     pass
 
 test5 :: IO ()
@@ -314,12 +329,7 @@ scratch = do
     let get_hashed_expr = flip (get_hashed_expr') ctx
     
     let t = get_hashed_expr "T1"
-    let hd = hash_data $ fromJust $ unique_definition_ref t
-    let tc = case hd of
-                TyCon x -> x
-                _ -> undefined
-
-    let tdep = dep_graph_from_tyCon tc
+    let tdep = fromJust $ get_tyDepGraph t
     putStrLn $ show tdep
 
 scratch' :: IO ()

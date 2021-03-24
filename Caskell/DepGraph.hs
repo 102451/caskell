@@ -420,7 +420,40 @@ madd_dataCon ti dc = do
 
       Just i -> return ()
 
-mis_recursive' :: Int -> TyCon.TyCon -> [TyCon.TyCon] -> TyDepMonad (Bool)
+isrec_ty :: Int -> [TyCon.TyCon] -> TyCoRep.Type -> TyDepMonad ([TyCon.TyCon], Bool)
+isrec_ty ti_target v t = case t of
+  TyCoRep.TyConApp tc ts -> do
+    mi <- mtyConRec_index tc
+    case mi of
+      Nothing -> return (v, False)
+
+      Just i -> do
+        ntyr <- mget_tyConRec i
+        r' <- mis_recursive' ti_target (tyr_tyCon ntyr) v
+        foldM (visitone ti_target) r' ts
+
+  TyCoRep.TyVarTy var -> do
+    if Var.isTyVar var then do
+      let t' = Var.varType var
+      isrec_ty ti_target v t'
+    else
+      return (v, False)
+
+  TyCoRep.FunTy _ t1 t2 -> do
+    (v1, r1) <- isrec_ty ti_target v t1
+    (v2, r2) <- isrec_ty ti_target v1 t2
+    return (v2, r1 || r2)
+
+  _ -> return (v, False)
+
+visitone :: Int -> ([TyCon.TyCon], Bool) -> TyCoRep.Type -> TyDepMonad ([TyCon.TyCon], Bool)
+visitone ti_target (v, result) t =
+    if result then
+        return (v, result)
+    else
+        isrec_ty ti_target v t
+
+mis_recursive' :: Int -> TyCon.TyCon -> [TyCon.TyCon] -> TyDepMonad ([TyCon.TyCon], Bool)
 mis_recursive' ti_target subject visited = do
     graph <- get
     ttyr <- mget_tyConRec ti_target
@@ -433,29 +466,19 @@ mis_recursive' ti_target subject visited = do
       if not is_visited then do
           let sdcs = TyCon.tyConDataCons subject
           let sargs = concatMap (DataCon.dataConOrigArgTys) sdcs
-          
-          let isrec t = case t of
-                  TyCoRep.TyConApp tc _ -> do
-                    mi <- mtyConRec_index tc
-                    case mi of
-                      Nothing -> return False
-                      Just i -> do
-                        ntyr <- mget_tyConRec i
-                        mis_recursive' ti_target (tyr_tyCon ntyr) (subject : visited)
-                  _ -> return False
 
-          args_rec <- mapM (isrec) sargs
-
-          return $ any (id) args_rec
+          foldM (visitone ti_target) (subject : visited, False) (sargs)
       else
-        return False -- visited, not-same tycons are ignored
+        return (visited, False) -- visited, not-same tycons are ignored
     else
-      return True
+      return (visited, True)
 
 -- check if tycon at index ti_subject directly or indirectly recuses to
 -- tycon at index ti_target
 mis_recursive :: Int -> TyCon.TyCon -> TyDepMonad (Bool)
-mis_recursive ti_target subject = mis_recursive' ti_target subject []
+mis_recursive ti_target subject = do
+    (_, res) <- mis_recursive' ti_target subject []
+    return res
 
 mrec_add_recTy :: [Int] -> [RecTy] -> RecTy -> TyDepMonad ([RecTy], Int)
 mrec_add_recTy istack tcarglist narg =
