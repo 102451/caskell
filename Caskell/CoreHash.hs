@@ -284,7 +284,9 @@ hash_algTyCon tc = do
 
     extra_bts <- case rhs of
       TyCon.TupleTyCon _ sort -> return $ toBytes sort
-      TyCon.NewTyCon dc t _ _ _ -> return $ error "null" -- TODO
+      TyCon.NewTyCon _ _ _ cb _ -> do
+        h <- hash_coaxiom cb
+        return $ toBytes h
       _ -> return []
 
     graph_hash <- hash_tyDepGraph graph
@@ -359,6 +361,22 @@ hash_typeSynonymTyCon tc = do
     let syn = fromJust $ TyCon.synTyConRhs_maybe tc
 
     hash_type syn
+
+-- coaxiom
+hash_coaxiom :: CoAxiom.CoAxiom a -> CtxMonad (Hash)
+hash_coaxiom coax = do
+    let tid = typeID coax
+    let tib = toBytes tid
+
+    let cn = CoAxiom.co_ax_name coax
+    let cr = CoAxiom.co_ax_role coax
+
+    let crb = toBytes cr
+
+    -- TODO: branches
+    let bts = concat [tib, crb]
+
+    return $ get_hash bts
 
 -- type hash
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCoRep.html#Type

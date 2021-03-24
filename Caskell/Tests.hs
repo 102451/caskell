@@ -303,6 +303,10 @@ test5 = do
     let c2 = get_hashed_expr "C2"
     let c3 = get_hashed_expr "C3"
 
+    putStrLn $ show $ get_tyDepGraph c1
+    putStrLn $ show $ get_tyDepGraph c2
+    putStrLn $ show $ get_tyDepGraph c3
+
     assertEqual "hash C1 == hash C2" (hash c1) (hash c2)
     assertNotEqual "hash C1 /= hash C3" (hash c1) (hash c3)
 
