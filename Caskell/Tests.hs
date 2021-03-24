@@ -287,8 +287,6 @@ test4 = do
     let t7 = get_hashed_expr "T7"
     let t9 = get_hashed_expr "T9"
 
-    putStrLn $ show $ fromJust $ get_tyDepGraph t7
-    putStrLn $ show $ fromJust $ get_tyDepGraph t9
     assertNotEqual "hash T7 /= hash T9" (hash t7) (hash t9)
     pass
 

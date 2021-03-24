@@ -180,19 +180,34 @@ hash_tyConBinder (Var.Bndr v vis) = do
 ------------------
 -- DEP GRAPH BLOCK
 ------------------
-hash_tyDepGraph_tc :: TyDepGraph -> TyCon.TyCon -> CtxMonad (Hash)
-hash_tyDepGraph_tc graph tc = do
-    let ti = fromJust $ tyConRec_index graph tc
-    let tyr = dep_records graph !! ti
+hash_tyDepGraph :: TyDepGraph -> CtxMonad (Hash)
+hash_tyDepGraph graph = do
+    let tyrs = dep_records graph
+    tyrs_hashes <- mapM (hash_tyDepGraph_tyr graph) tyrs
 
-    let bndrs = tyr_bndrs tyr
-    let dces = tyr_dataCons tyr
-    bndrs_hashes <- mapM (hash_tyDepGraph_bndr graph) bndrs
-    dces_hashes <- mapM (hash_tyDepGraph_dce graph) dces
+    let tyrs_bytes = concatMap (toBytes) tyrs_hashes
 
-    let bndrs_bytes = map (toBytes) bndrs_hashes
-    let dces_bytes = map (toBytes) dces_hashes
-    return $ get_hash dces_bytes
+    return $ get_hash tyrs_bytes
+
+hash_tyDepGraph_tyr :: TyDepGraph -> DepGraphTypeRecord -> CtxMonad (Hash)
+hash_tyDepGraph_tyr graph tyr = do
+    let tc = tyr_tyCon tyr
+
+    let hsh' | TyCon.isPrimTyCon tc = hash_primTyCon tc
+             | TyCon.isTypeSynonymTyCon tc = hash_typeSynonymTyCon tc
+             | TyCon.isPromotedDataCon tc = hash_promotedDataCon tc
+             | TyCon.isFamilyTyCon tc = return null_hash -- TODO: optional
+             | True = do
+                let bndrs = tyr_bndrs tyr
+                let dces = tyr_dataCons tyr
+                bndrs_hashes <- mapM (hash_tyDepGraph_bndr graph) bndrs
+                dces_hashes <- mapM (hash_tyDepGraph_dce graph) dces
+
+                let bndrs_bytes = map (toBytes) bndrs_hashes
+                let dces_bytes = map (toBytes) dces_hashes
+                return $ get_hash dces_bytes
+
+    hsh'
     
 hash_tyDepGraph_bndr :: TyDepGraph -> RecBinder -> CtxMonad (Hash)
 hash_tyDepGraph_bndr graph bndr = do
@@ -227,14 +242,20 @@ hash_tyDepGraph_recTy graph rec = do
     let tid = toBytes $ typeID rec
     bts <- case rec of
              Tc tc args -> do
-               tchash <- hash_tyCon tc
+               graphhash <- do
+                     let mti = tyConRec_index graph tc
+                     case mti of
+                       Nothing -> error "TyCon not in ty dep graph"
+                       Just ti -> do
+                         let tyr = get_record graph ti
+                         hash_tyDepGraph_tyr graph tyr
+
                argbytes <- hashbytes_tyDepGraph_recTys graph args
 
-               return $ concat [toBytes tchash, argbytes]
+               return $ concat [toBytes graphhash, argbytes]
 
              FunTy args -> do
-               argbytes <- hashbytes_tyDepGraph_recTys graph args
-               return argbytes
+               hashbytes_tyDepGraph_recTys graph args
 
              Rec i -> return $ toBytes i
 
@@ -266,7 +287,7 @@ hash_algTyCon tc = do
       TyCon.NewTyCon dc t _ _ _ -> return $ error "null" -- TODO
       _ -> return []
 
-    graph_hash <- hash_tyDepGraph_tc graph tc
+    graph_hash <- hash_tyDepGraph graph
 
     let bts = toBytes rhsid ++ toBytes graph_hash ++ extra_bts
     return $ get_hash bts
