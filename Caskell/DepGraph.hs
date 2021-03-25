@@ -74,16 +74,19 @@ instance Eq DepDataConRecordEntry where
 
 data RecTy = Tc TyCon.TyCon [RecTy] -- arguments
              | FunTy [RecTy] -- always exactly 2
+             | TyVar Int -- index for the type argument of a TyCon
              | Rec Int -- int = index in dep_records, ONLY for recursive tycons
 
 recTy_constructor_order :: RecTy -> Int
 recTy_constructor_order (Tc _ _) = 0
 recTy_constructor_order (FunTy _) = 1
-recTy_constructor_order (Rec _) = 2
+recTy_constructor_order (TyVar _) = 2
+recTy_constructor_order (Rec _) = 3
 
 instance Eq RecTy where
     (==) (Tc ltc ll) (Tc rtc rl) = (ltc == rtc) && (ll == rl)
     (==) (FunTy ll) (FunTy rl) = (ll == rl)
+    (==) (TyVar li) (TyVar ri) = (li == ri)
     (==) (Rec li) (Rec ri) = (li == ri)
     (==) _ _ = False
 
@@ -97,11 +100,13 @@ instance Show RecTy where
 
             FunTy l -> show (l !! 0) ++ " -> " ++ show (l !! 1)
 
+            TyVar i -> "\\" ++ show i
             Rec i -> ">>" ++ show i
 
 data RecBinder = RecBinder
     { rbndr_vis :: TyCon.TyConBndrVis
-    , rbndr_ty :: RecTy
+    , rbndr_var :: Var.TyVar -- for comparison
+    , rbndr_ty :: RecTy -- for hashing
     }
 
 instance Eq RecBinder where
@@ -133,6 +138,7 @@ instance Show TyDepGraph where
                     s' = if null argss then ts else ts ++ " (" ++ argss ++ ")"
                 
                 FunTy l -> rectys (l !! 0) ++ " -> " ++ rectys (l !! 1)
+                TyVar i -> "\\" ++ show i
                 Rec i -> recs i
             
 
@@ -145,7 +151,7 @@ instance Show TyDepGraph where
       -- show one binder
       bndrs bndr = s' where
             viss = show $ rbndr_vis bndr
-            rs = rectys $ rbndr_ty bndr
+            rs = showPpr' $ rbndr_var bndr
             s' = concat ["(", viss, " ", rs, ")"]
 
       -- show one record
@@ -303,7 +309,7 @@ madd_tyCon tc = do
 
       Just i -> return mi
 
-type BndrIndex = (TyCon.TyConBndrVis, Int)
+type BndrIndex = (TyCon.TyConBndrVis, Var.TyVar, Int)
 
 madd_tyConBinder' :: BndrIndex -> [Int] -> TyCoRep.Type -> TyDepMonad ()
 madd_tyConBinder' vs arg_stack ty = do
@@ -314,10 +320,10 @@ madd_tyConBinder' vs arg_stack ty = do
 madd_tyConBinder :: Int -> TyCon.TyConBinder -> TyDepMonad ()
 madd_tyConBinder ti (Var.Bndr var vis) = do
     let ty = Var.varType var
-    madd_tyConBinder' (vis, ti) [] ty
+    madd_tyConBinder' (vis, var, ti) [] ty
 
 mbndr_add_ty :: BndrIndex -> [Int] -> TyCoRep.Type -> TyDepMonad (RecTy)
-mbndr_add_ty vs@(_, ti) arg_stack ty = do
+mbndr_add_ty vs@(_, _, ti) arg_stack ty = do
     case ty of
         TyCoRep.TyConApp tc ts ->
           mbndr_add_tyCon vs arg_stack tc ts
@@ -336,7 +342,7 @@ mbndr_add_ty vs@(_, ti) arg_stack ty = do
         _ -> undefined
 
 mbndr_add_tyCon :: BndrIndex -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
-mbndr_add_tyCon vs@(_, ti) arg_stack tc ts = do
+mbndr_add_tyCon vs@(_, _, ti) arg_stack tc ts = do
     ri <- madd_tyCon tc
     nti <- fromJust <$> mtyConRec_index tc
 
@@ -347,7 +353,7 @@ mbndr_add_tyCon vs@(_, ti) arg_stack tc ts = do
         mbndr_plain_add_tyCon vs arg_stack tc ts
 
 mbndr_add_new_recTy :: BndrIndex -> [Int] -> RecTy -> TyDepMonad ([RecTy], Int)
-mbndr_add_new_recTy vs@(vis, ti) arg_stack nrec = do
+mbndr_add_new_recTy vs@(vis, var, ti) arg_stack nrec = do
     tyr <- mget_tyConRec ti
     let tbndrs = tyr_bndrs tyr
     let bndrs = map (rbndr_ty) tbndrs
@@ -355,7 +361,7 @@ mbndr_add_new_recTy vs@(vis, ti) arg_stack nrec = do
     (nbndrs', i) <- mrec_add_recTy arg_stack bndrs nrec
 
     let nbndr' = last nbndrs'
-    let nbndr = RecBinder { rbndr_vis = vis, rbndr_ty = nbndr' }
+    let nbndr = RecBinder { rbndr_vis = vis, rbndr_var = var, rbndr_ty = nbndr' }
 
     let ntbndrs = tbndrs ++ [nbndr]
     let ntyr = tyr { tyr_bndrs = ntbndrs }
@@ -363,7 +369,7 @@ mbndr_add_new_recTy vs@(vis, ti) arg_stack nrec = do
     return (nbndrs', i)
 
 mbndr_plain_add_tyCon :: BndrIndex -> [Int] -> TyCon.TyCon -> [TyCoRep.Type] -> TyDepMonad (RecTy)
-mbndr_plain_add_tyCon vs@(_, ti) arg_stack tc ts = do
+mbndr_plain_add_tyCon vs@(_, _, ti) arg_stack tc ts = do
     let nbndr = Tc tc []
     (nargs, i) <- mbndr_add_new_recTy vs arg_stack nbndr
 
@@ -377,7 +383,7 @@ mbndr_plain_add_tyCon vs@(_, ti) arg_stack tc ts = do
     return ret
 
 mbndr_add_funTy :: BndrIndex -> [Int] -> TyCoRep.Type -> TyCoRep.Type -> TyDepMonad (RecTy)
-mbndr_add_funTy vs@(_, ti) arg_stack t1 t2 = do
+mbndr_add_funTy vs@(_, _, ti) arg_stack t1 t2 = do
     let nbndr = FunTy []
 
     (_, i) <- mbndr_add_new_recTy vs arg_stack nbndr
@@ -537,6 +543,14 @@ mrec_add_funTy is arg_stack t1 t2 = do
     let ret = get_recTy (arg_stack ++ [i]) nargs
     return ret
 
+mrec_add_tyVar :: (Int, Int) -> [Int] -> Int -> TyDepMonad (RecTy)
+mrec_add_tyVar is arg_stack i = do
+    let nrec = TyVar i
+    (_, i) <- mrec_add_new_recTy is arg_stack nrec
+    dce <- mget_dataConRec is
+
+    return nrec
+
 mrec_add_rec :: (Int, Int) -> [Int] -> Int -> TyDepMonad (RecTy)
 mrec_add_rec is arg_stack i = do
     let nrec = Rec i
@@ -556,22 +570,33 @@ mrec_add_tyCon is@(ti, di) arg_stack tc ts = do
     else
         mrec_plain_add_tyCon is arg_stack tc ts
         
+mtyVar_index :: Int -> Var.TyVar -> TyDepMonad (Maybe Int)
+mtyVar_index ti var = do
+    tyr <- mget_tyConRec ti
+    let bndrs = tyr_bndrs tyr
+    let r = findIndex_s (==var) (rbndr_var) bndrs
+    return r
+
 mrec_add_ty :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyDepMonad (RecTy)
-mrec_add_ty is arg_stack ty = case ty of
-    TyCoRep.TyConApp tc ts -> mrec_add_tyCon is arg_stack tc ts
+mrec_add_ty is@(ti, _) arg_stack ty = do
+    tyr <- mget_tyConRec ti
+    let bndrs = tyr_bndrs tyr
 
-    TyCoRep.TyVarTy var -> do
-      if Var.isTyVar var then do
-        let t = Var.varType var
-        mrec_add_ty is arg_stack t
-      else
-        undefined
+    case ty of
+        TyCoRep.TyConApp tc ts -> mrec_add_tyCon is arg_stack tc ts
 
-    TyCoRep.FunTy _ t1 t2 -> do
-      mrec_add_funTy is arg_stack t1 t2
+        TyCoRep.TyVarTy var -> do
+          if Var.isTyVar var then do
+            vari <- fromJust <$> mtyVar_index ti var
+            mrec_add_tyVar is arg_stack vari
+          else
+            undefined
 
-    --TyCoRep.LitTy tl -> do
-    _ -> undefined
+        TyCoRep.FunTy _ t1 t2 -> do
+          mrec_add_funTy is arg_stack t1 t2
+
+        --TyCoRep.LitTy tl -> do
+        _ -> undefined
 
 madd_dataConArg' :: (Int, Int) -> [Int] -> TyCoRep.Type -> TyDepMonad ()
 madd_dataConArg' is@(ti, di) arg_stack ty = do
@@ -619,25 +644,25 @@ mcompare_dataConRec l r = do
       let rtag = DataCon.dataConTag rdc
       
       let cmp1 = compare (length largs) (length rargs)
-      cmp2 <- mcompare_dataConRec_args largs rargs
+      cmp2 <- mcompare_recTys largs rargs
       let cmp3 = compare ltag rtag
 
       return $ order [cmp1, cmp2, cmp3]
 
-mcompare_dataConRec_args :: [RecTy] -> [RecTy] -> TyDepMonad (Ordering)
-mcompare_dataConRec_args []     []     = return EQ
-mcompare_dataConRec_args []     (_:_)  = return LT
-mcompare_dataConRec_args (_:_)  []     = return GT
-mcompare_dataConRec_args (x:xs) (y:ys) = do
-    mcomp <- mcompare_dataConRec_arg x y
+mcompare_recTys :: [RecTy] -> [RecTy] -> TyDepMonad (Ordering)
+mcompare_recTys []     []     = return EQ
+mcompare_recTys []     (_:_)  = return LT
+mcompare_recTys (_:_)  []     = return GT
+mcompare_recTys (x:xs) (y:ys) = do
+    mcomp <- mcompare_recTy x y
     case mcomp of 
-        EQ    -> mcompare_dataConRec_args xs ys
+        EQ    -> mcompare_recTys xs ys
         other -> return other
 
-mcompare_dataConRec_arg :: RecTy -> RecTy -> TyDepMonad (Ordering)
-mcompare_dataConRec_arg (Tc ltc largs) (Tc rtc rargs) =
+mcompare_recTy :: RecTy -> RecTy -> TyDepMonad (Ordering)
+mcompare_recTy (Tc ltc largs) (Tc rtc rargs) =
     if ltc == rtc then
-      mcompare_dataConRec_args largs rargs
+      mcompare_recTys largs rargs
     else do
       li <- mtyConRec_index ltc
       ri <- mtyConRec_index rtc
@@ -648,12 +673,14 @@ mcompare_dataConRec_arg (Tc ltc largs) (Tc rtc rargs) =
         rtyr <- mget_tyConRec $ fromJust ri
         mcompare_typeRecord ltyr rtyr
 
-mcompare_dataConRec_arg (FunTy ll) (FunTy rl) =
-    mcompare_dataConRec_args ll rl
+mcompare_recTy (FunTy ll) (FunTy rl) =
+    mcompare_recTys ll rl
 
-mcompare_dataConRec_arg (Rec i) (Rec j)  = return $ compare i j
+mcompare_recTy (TyVar i) (TyVar j)  = return $ compare i j
 
-mcompare_dataConRec_arg a b =
+mcompare_recTy (Rec i) (Rec j)  = return $ compare i j
+
+mcompare_recTy a b =
     return $ compare (recTy_constructor_order a) (recTy_constructor_order b)
 
 mcompare_typeRecord :: DepGraphTypeRecord -> DepGraphTypeRecord -> TyDepMonad (Ordering)

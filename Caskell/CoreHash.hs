@@ -145,7 +145,7 @@ hash_tyCon tc = do
                      | TyCon.isAlgTyCon tc = hash_algTyCon tc
                      | TyCon.isPrimTyCon tc = hash_primTyCon tc
                      | TyCon.isTypeSynonymTyCon tc = hash_typeSynonymTyCon tc
-                     -- TODO: these are extensions
+                     -- TODO: optional these are extensions
                      | TyCon.isPromotedDataCon tc = hash_promotedDataCon tc
                      | TyCon.isFamilyTyCon tc = return null_hash
                      -- TyCon.TcTyCon
@@ -257,6 +257,7 @@ hash_tyDepGraph_recTy graph rec = do
              FunTy args -> do
                hashbytes_tyDepGraph_recTys graph args
 
+             TyVar i -> return $ toBytes i
              Rec i -> return $ toBytes i
 
     let hsh = get_hash (concat [tid, bts])
@@ -407,8 +408,6 @@ hash_type t = do
             dprint "]"
             return $ B tid $ toBytes tchash ++ concatMap (toBytes) typehashes
 
-        -- TODO: finish the rest
-        TyCoRep.ForAllTy _ _ -> return $ H null_hash
         TyCoRep.FunTy _ t arg -> do
             dprint "("
             h1 <- hash_type t
@@ -416,7 +415,9 @@ hash_type t = do
             h2 <- hash_type arg
             dprint ")"
             return $ B tid (toBytes h1 ++ toBytes h2)
-            
+
+        -- TODO: finish the rest
+        TyCoRep.ForAllTy _ _ -> return $ H null_hash
         TyCoRep.LitTy _ -> return $ H null_hash
         TyCoRep.CastTy _ _ -> return $ H null_hash
         TyCoRep.CoercionTy _ -> return $ H null_hash
@@ -481,7 +482,7 @@ hash_dataCon dc = do
             let ret_bytes = toBytes ret_hash
             let tag_bytes = uniqueBytes stable_tag
 
-            return $ get_hash $ args_bytes ++ [ret_bytes, tag_bytes]
+            return $ get_hash $ concat $ args_bytes ++ [ret_bytes, tag_bytes]
 
     let hashdata = DataCon dc
     let coredata = coreData uniq hashdata True
@@ -980,7 +981,8 @@ instance TypeIDAble RecTy where
     typeID x = case x of
         Tc _ _  -> 0x0A100000
         FunTy _ -> 0x0A100001
-        Rec _   -> 0x0A100002
+        TyVar _ -> 0x0A100002
+        Rec _   -> 0x0A100003
 
     typeName x = case x of
         Tc _ _  -> "RecTy.Tc"

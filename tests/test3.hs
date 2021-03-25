@@ -24,6 +24,10 @@ data T12 b = U | V b
 data T13 a b = W a b | X b a
 data T14 a b = Y b a | Z a b
 
+-- T13' and T14' are NOT isomorph, order of arguments matters
+data T13' a b = W' a b
+data T14' a b = Y' b a
+
 -- tuples
 -- T15 and T16 are isomorph
 data T15 = AA (Int, Char)
@@ -35,6 +39,7 @@ data T17 = AC (Char, Int)
 data T18 = AD { ad_a :: Int, ad_b :: Char }
 data T19 = AE { ae_a :: Int, ae_b :: Char }
 data T20 = AF { af_a :: Char, af_b :: Int } -- order matters
+
 
 main :: IO ()
 main = return ()

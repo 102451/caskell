@@ -194,7 +194,11 @@ test3 = do
     let t14 = get_hashed_expr "T14"
 
     assertEqual "hash T13 == hash T14" (hash t13) (hash t14)
-    assertNotEqual "hash T13 /= hash T6" (hash t13) (hash t6)
+
+    let t13' = get_hashed_expr "T13'"
+    let t14' = get_hashed_expr "T14'"
+
+    assertNotEqual "hash T13' /= hash T14'" (hash t13') (hash t14')
 
     let s = get_hashed_expr "S"
     let t = get_hashed_expr "T"
@@ -302,10 +306,6 @@ test5 = do
     let c1 = get_hashed_expr "C1"
     let c2 = get_hashed_expr "C2"
     let c3 = get_hashed_expr "C3"
-
-    putStrLn $ show $ get_tyDepGraph c1
-    putStrLn $ show $ get_tyDepGraph c2
-    putStrLn $ show $ get_tyDepGraph c3
 
     assertEqual "hash C1 == hash C2" (hash c1) (hash c2)
     assertNotEqual "hash C1 /= hash C3" (hash c1) (hash c3)
