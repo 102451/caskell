@@ -417,10 +417,10 @@ hash_type t = do
             return $ B tid (toBytes h1 ++ toBytes h2)
 
         -- TODO: finish the rest
-        TyCoRep.ForAllTy _ _ -> return $ H null_hash
-        TyCoRep.LitTy _ -> return $ H null_hash
-        TyCoRep.CastTy _ _ -> return $ H null_hash
-        TyCoRep.CoercionTy _ -> return $ H null_hash
+        TyCoRep.ForAllTy _ _ -> return $ error "ForAllTy"
+        TyCoRep.LitTy _ -> return $ error "LitTy"
+        TyCoRep.CastTy _ _ -> return $ error "CastTy"
+        TyCoRep.CoercionTy _ -> return $ error "CoercionTy"
 
     dprint ")"
 
@@ -543,18 +543,18 @@ hash_expr expr = do
 
     -- TODO: implement
         CoreSyn.Let b e -> do
-            dprintln "let"
-            return $ H null_hash
+            return $ error "Let"
 
     -- TODO: implement
         CoreSyn.Case e b t alts -> do
-            dprintln "case"
-            return $ H null_hash
+            bh <- hash_bound_expr b e Case
+            case_th <- hash_type t
+
+            return $ B tid $ toBytes bh ++ toBytes case_th
 
     -- TODO: implement
         CoreSyn.Cast e coer -> do
-            dprintln "cast"
-            return $ H null_hash
+            return $ error "Cast"
 
     -- TODO: implement
         CoreSyn.Type t -> do
@@ -564,11 +564,11 @@ hash_expr expr = do
     -- TODO: implement
         CoreSyn.Coercion coer -> do
             dprintln "coercion"
-            return $ H null_hash
+            return $ error "Coercion"
 
         _ -> do
             dprintln "etc"
-            return $ H null_hash
+            return $ error "Other"
 
     let hash = get_hash hob
 
@@ -693,6 +693,7 @@ hash_literal lit = do
             return $ B tid $ uniqueBytes r
 
         _ -> do
+            dprintln "unknown literal"
             return $ H null_hash
 
     let hash = get_hash hob
