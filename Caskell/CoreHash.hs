@@ -493,22 +493,26 @@ hash_dataCon dc = do
 -- normal expressions
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
-    mapM (hash_bind) binds
+    mapM (hash_corebind) binds
     return ()
 
-hash_bind :: CoreSyn.CoreBind -> CtxMonad (Hash)
-hash_bind cb@(CoreSyn.NonRec b expr) = do
+hash_corebind :: CoreSyn.CoreBind -> CtxMonad (Hash)
+hash_corebind (CoreSyn.NonRec b expr) = do
+    hash_bound_expr b expr Module
+
+hash_corebind (CoreSyn.Rec l) = undefined -- TODO: implement
+
+hash_bound_expr :: CoreSyn.CoreBndr -> CoreSyn.Expr CoreSyn.CoreBndr -> ExprScope -> CtxMonad (Hash)
+hash_bound_expr b e s = do
     let name = Var.varName b
     let uniq = Name.nameUnique name
 
-    let hash_data = CoreBind cb
+    let hash_data = BoundExpr b e s
     let coredata = coreData uniq hash_data True
 
-    hash_core_hashable coredata name_filter (hash_expr expr)
+    hash_core_hashable coredata name_filter (hash_expr e)
 
-hash_bind (CoreSyn.Rec l) = undefined -- TODO: implement
-
-hash_expr :: CoreSyn.Expr b -> CtxMonad (Hash)
+hash_expr :: CoreSyn.Expr CoreSyn.CoreBndr -> CtxMonad (Hash)
 hash_expr expr = do
     let tid = typeID expr
     let tname = typeName expr
@@ -531,10 +535,11 @@ hash_expr expr = do
             dprint ")"
             return $ B tid $ toBytes b1 ++ toBytes b2
 
-    -- TODO: implement
-        CoreSyn.Lam b e -> do
-            dprintln "lambda"
-            return $ H placeholder_hash
+        CoreSyn.Lam b' e -> do
+            dprint $ "(\\" ++ (short_name $ Var.varName b') ++ " -> "
+            h <- hash_bound_expr b' e Lam
+            dprint ")"
+            return $ H h
 
     -- TODO: implement
         CoreSyn.Let b e -> do
@@ -588,7 +593,7 @@ hash_var var = do
         
         case mmodexpr of
           Just bind -> do
-            h <- hash_bind bind
+            h <- hash_corebind bind 
             -- add the existing hash to the var
             uh' <- mlookup_hash h
             let uh = fromJust uh'
@@ -597,6 +602,7 @@ hash_var var = do
             return h
 
           Nothing -> do
+            -- TODO: differenciate between param
             if (Var.isId var) then do
                 mh <- hash_id var
                 case mh of

@@ -12,6 +12,7 @@ module Caskell.Context
     name,
     uniq,
     HashedData(..),
+    ExprScope(..),
     hashed_data_typename,
     UniqueHashMap,
     CtxMonad,
@@ -138,21 +139,22 @@ hash_data_ref h = do
 
 coreData uniq hdata hole = CoreData uniq hdata hole Nothing False
 
-data HashedData = CoreBind CoreSyn.CoreBind -- direct expression
+data HashedData = BoundExpr CoreSyn.CoreBndr (CoreSyn.Expr CoreSyn.CoreBndr) ExprScope -- direct expression
                 | Var Var.Var -- typed reference to expression
                 | TyCon TyCon.TyCon -- type constructor (basically: a data type)
                 | DataCon DataCon.DataCon -- data constructor
+
+data ExprScope = Module | Lam | Let
+    deriving (Eq, Show)
     
 hashed_data_typename x = case x of
-    CoreBind _ -> "Cb" 
-    Var _      -> "Var"
-    TyCon _    -> "Tc"
-    DataCon _  -> "Dc"
+    BoundExpr _ _ _ -> "BE" 
+    Var _           -> "Var"
+    TyCon _         -> "Tc"
+    DataCon _       -> "Dc"
 
 name :: HashedData -> Maybe Name.Name
-name (CoreBind cb) = case cb of
-    CoreSyn.NonRec b _ -> name (Var b)
-    CoreSyn.Rec _ -> undefined -- TODO: recursive
+name (BoundExpr b _ _) = name (Var b)
 
 name (Var v) = Just (Var.varName v)
 name (TyCon tc) = Just (TyCon.tyConName tc)

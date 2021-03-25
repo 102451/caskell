@@ -7,6 +7,7 @@ module Caskell.Tests
     test3,
     test4,
     test5,
+    test6,
     run_tests',
 
     scratch,
@@ -312,6 +313,20 @@ test5 = do
 
     pass
 
+test6 :: IO ()
+test6 = do
+    ctx <- init_test 6 "functions"
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    let f1 = get_hashed_expr "f1"
+    let f2 = get_hashed_expr "f2"
+    let f3 = get_hashed_expr "f3"
+
+    assertEqual "hash f1 == hash f2" (hash f1) (hash f2)
+    assertNotEqual "hash f1 /= hash f3" (hash f1) (hash f3)
+
+    pass
+
 run_tests :: IO ()
 run_tests = do
     test1
@@ -319,6 +334,7 @@ run_tests = do
     test3
     test4
     test5
+    test6
 
     putStrLn "all tests passed"
 
