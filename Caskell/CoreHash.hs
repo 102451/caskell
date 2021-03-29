@@ -556,11 +556,15 @@ hash_expr expr vstack = do
             dprint ")"
             return $ B tid $ toBytes ht ++ toBytes h
 
-    -- TODO: implement
-        CoreSyn.Let b e -> do
-            return $ error "Let"
+        CoreSyn.Let b' e -> do
+            bh <- case b' of
+                    CoreSyn.NonRec b'' e' -> 
+                      hash_bound_expr' b'' e' Let vstack
 
-    -- TODO: implement
+            eh <- hash_expr e vstack
+
+            return $ B tid $ toBytes bh ++ toBytes eh
+
         CoreSyn.Case e b t alts -> do
             bh <- hash_bound_expr b e Case
             case_th <- hash_type t

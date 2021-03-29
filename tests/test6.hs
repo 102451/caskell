@@ -56,4 +56,16 @@ fcb2 :: MaybeIntPair -> Int
 fcb2 (This a b) = b
 fcb2 None = 0
 
+-- let
+-- flet1 and flet2 are not isomoprh
+flet1 :: Int -> Int
+flet1 x =
+    let y = x + 1
+    in y + y
+
+flet2 :: Int -> Int
+flet2 x =
+    let y = 2 * x
+    in y + y
+
 main = return ()

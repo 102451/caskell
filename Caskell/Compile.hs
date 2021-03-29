@@ -28,6 +28,7 @@ prepare_dyn_flags ga = do
         DynFlags.ghcLink   = DynFlags.NoLink
       , DynFlags.hscTarget = DynFlags.HscNothing
       , DynFlags.ghcMode   = DynFlags.OneShot
+      , DynFlags.optLevel  = 0
       }
     GHC.setSessionDynFlags dflags2
     ga
