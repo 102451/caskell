@@ -564,11 +564,9 @@ hash_expr expr vstack = do
         CoreSyn.Case e b t alts -> do
             bh <- hash_bound_expr b e Case
             case_th <- hash_type t
-            alt_hashes <- hash_case_alts alts vstack
+            alts_hash <- hash_case_alts alts vstack
 
-            println $ showPpr' alts
-            -- TODO: alts
-            return $ B tid $ toBytes bh ++ toBytes case_th
+            return $ B tid $ toBytes bh ++ toBytes case_th ++ toBytes alts_hash
 
     -- TODO: implement
         CoreSyn.Cast e coer -> do
@@ -601,7 +599,30 @@ hash_case_alts alts vstack = do
 hash_case_alt :: CoreSyn.Alt CoreSyn.CoreBndr -> VarStack -> CtxMonad (Hash)
 hash_case_alt (altcon, vars, e) vstack = do
     let tid = toBytes $ typeID altcon
-    return null_hash
+
+    println $ showPpr' vars
+    let nstack = vstack ++ vars
+
+    altcon_hash <- hash_altcon altcon
+    thashes <- mapM (hash_type . Var.varType) vars
+    eh <- hash_expr e nstack
+    
+    let altcon_b = toBytes altcon_hash
+    let tbytes = concatMap (toBytes) thashes
+    let eb = toBytes eh
+
+    return $ get_hash (altcon_b ++ tbytes ++ eb)
+
+hash_altcon :: CoreSyn.AltCon -> CtxMonad (Hash)
+hash_altcon ac = do
+    let tid = typeID ac
+    
+    h <- case ac of
+            CoreSyn.DataAlt dc -> H <$> hash_dataCon dc
+            CoreSyn.LitAlt lit -> H <$> hash_literal lit
+            CoreSyn.DEFAULT -> return $ B tid []
+
+    return $ get_hash h
 
 hash_var' :: Var.Var -> VarStack -> CtxMonad (Hash)
 hash_var' var vstack = do
@@ -618,7 +639,7 @@ hash_var' var vstack = do
         let t = Var.varType var
         ht <- hash_type t
 
-        let h = get_hash $ (toBytes (0x0A200000 :: Word32) ++ toBytes i ++ toBytes ht)
+        let h = get_hash $ (toBytes local_var_index_id ++ toBytes i ++ toBytes ht)
         return h
       Nothing -> do
         -- Find in already hashed values -> return hash
@@ -1036,7 +1057,7 @@ instance TypeIDAble RecTy where
         FunTy _ -> "RecTy.FunTy"
         Rec _   -> "RecTy.Rec"
 
--- Reserved: Local Var index 0x0A200000
+local_var_index_id = 0x0A200000 :: Word32
 
 
 
