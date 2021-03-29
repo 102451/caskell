@@ -2,12 +2,15 @@
 module Caskell.Tests
 (
     run_tests,
-    test1,
-    test2,
-    test3,
-    test4,
-    test5,
-    test6,
+    test1, -- literals, references
+    test2, -- literals
+    test3, -- types
+    test4, -- recursive types
+    test5, -- typeclasses
+    test6, -- functions
+    test7, -- recusive functions
+
+    -- TODO: failing instances
     run_tests',
 
     scratch,
@@ -353,6 +356,17 @@ test6 = do
 
     pass
 
+test7 :: IO ()
+test7 = do
+    ctx <- init_test 7 "recursive functions"
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    let f1 = get_hashed_expr "f1"
+    let f2 = get_hashed_expr "f2"
+
+    assertNotEqual "hash f1 /= hash f2" (hash f1) (hash f2)
+    
+
 run_tests :: IO ()
 run_tests = do
     test1
@@ -361,6 +375,7 @@ run_tests = do
     test4
     test5
     test6
+    test7
 
     putStrLn "all tests passed"
 
