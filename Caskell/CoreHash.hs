@@ -600,7 +600,6 @@ hash_case_alt :: CoreSyn.Alt CoreSyn.CoreBndr -> VarStack -> CtxMonad (Hash)
 hash_case_alt (altcon, vars, e) vstack = do
     let tid = toBytes $ typeID altcon
 
-    println $ showPpr' vars
     let nstack = vstack ++ vars
 
     altcon_hash <- hash_altcon altcon
@@ -617,12 +616,10 @@ hash_altcon :: CoreSyn.AltCon -> CtxMonad (Hash)
 hash_altcon ac = do
     let tid = typeID ac
     
-    h <- case ac of
-            CoreSyn.DataAlt dc -> H <$> hash_dataCon dc
-            CoreSyn.LitAlt lit -> H <$> hash_literal lit
-            CoreSyn.DEFAULT -> return $ B tid []
-
-    return $ get_hash h
+    case ac of
+        CoreSyn.DataAlt dc -> hash_dataCon dc
+        CoreSyn.LitAlt lit -> hash_literal lit
+        CoreSyn.DEFAULT -> return $ get_hash tid
 
 hash_var' :: Var.Var -> VarStack -> CtxMonad (Hash)
 hash_var' var vstack = do

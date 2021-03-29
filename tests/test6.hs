@@ -1,5 +1,8 @@
 
 -- function tests
+-- Note: the case statements may be optimized and these
+-- tests may not actually test case statements in that
+-- case.
 
 -- f1 and f2 are isomorph
 f1 :: Int -> Int
@@ -40,5 +43,17 @@ fc2 False = 0
 fc3 :: Bool -> Int
 fc3 True = 1
 fc3 _ = 0
+
+data MaybeIntPair = None | This Int Int
+
+-- case binding variables
+-- fcb1 and fcb2 are not isomorph
+fcb1 :: MaybeIntPair -> Int
+fcb1 (This a b) = a
+fcb1 None = 0
+
+fcb2 :: MaybeIntPair -> Int
+fcb2 (This a b) = b
+fcb2 None = 0
 
 main = return ()
