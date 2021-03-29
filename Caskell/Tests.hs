@@ -325,6 +325,15 @@ test6 = do
     assertEqual "hash f1 == hash f2" (hash f1) (hash f2)
     assertNotEqual "hash f1 /= hash f3" (hash f1) (hash f3)
 
+    let fl = get_hashed_expr "fl"
+    let fr = get_hashed_expr "fr"
+    let fl2 = get_hashed_expr "fl2"
+    let fl3 = get_hashed_expr "fl3"
+
+    assertNotEqual "hash fl /= hash fr" (hash fl) (hash fr)
+    assertNotEqual "hash fl /= hash fl2" (hash fl) (hash fl2)
+    assertNotEqual "hash fl /= hash fl3" (hash fl) (hash fl3)
+
     let fc1 = get_hashed_expr "fc1"
     let fc2 = get_hashed_expr "fc2"
     let fc3 = get_hashed_expr "fc3"
@@ -357,9 +366,10 @@ scratch = do
     ctx <- compile_file "tests/scratch.hs" debug_output
     let get_hashed_expr = flip (get_hashed_expr') ctx
     
-    let t = get_hashed_expr "T1"
-    let tdep = fromJust $ get_tyDepGraph t
-    putStrLn $ show tdep
+    let fl = get_hashed_expr "fl"
+    let fr = get_hashed_expr "fr"
+    putStrLn $ show fl
+    putStrLn $ show fr
 
 scratch' :: IO ()
 scratch' = compile_file' "tests/scratch.hs"

@@ -11,6 +11,21 @@ f2 y = y + 1
 f3 :: Int -> Int
 f3 z = z
 
+-- fl and fr are not isomorph
+-- fl and fl2 are not isomorph
+-- fl and fl3 are not isomorph
+fl :: Int -> Int -> Int
+fl x y = x
+
+fr :: Int -> Int -> Int
+fr x y = y
+
+fl2 :: Char -> Int -> Char
+fl2 x y = x
+
+fl3 :: Int -> Char -> Int
+fl3 x y = x
+
 -- fc1 and fc2 are isomorph
 -- fc1 and fc3 are not isomorph
 fc1 :: Bool -> Int

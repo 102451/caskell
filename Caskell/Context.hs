@@ -144,7 +144,7 @@ data HashedData = BoundExpr CoreSyn.CoreBndr (CoreSyn.Expr CoreSyn.CoreBndr) Exp
                 | TyCon TyCon.TyCon -- type constructor (basically: a data type)
                 | DataCon DataCon.DataCon -- data constructor
 
-data ExprScope = Module | Lam | Let | Case
+data ExprScope = Module | Let | Case
     deriving (Eq, Show)
     
 hashed_data_typename x = case x of
