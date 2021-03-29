@@ -325,6 +325,13 @@ test6 = do
     assertEqual "hash f1 == hash f2" (hash f1) (hash f2)
     assertNotEqual "hash f1 /= hash f3" (hash f1) (hash f3)
 
+    let fc1 = get_hashed_expr "fc1"
+    let fc2 = get_hashed_expr "fc2"
+    let fc3 = get_hashed_expr "fc3"
+
+    assertEqual "hash fc1 == hash fc2" (hash fc1) (hash fc2)
+    assertNotEqual "hash fc1 /= hash fc3" (hash fc1) (hash fc3)
+
     pass
 
 run_tests :: IO ()

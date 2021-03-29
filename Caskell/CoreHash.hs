@@ -270,7 +270,7 @@ hash_funTyCon tc = do
 
     dprintln $ short_name n
     -- TODO: implement
-    return null_hash
+    error "FunTyCon"
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#AlgTyCon
 hash_algTyCon :: TyCon.TyCon -> CtxMonad (Hash)
@@ -393,6 +393,8 @@ hash_type t = do
             vhash <- hash_var var
             return $ H vhash
 
+        TyCoRep.AppTy t1 t2 -> error "type application"
+{-
         TyCoRep.AppTy t1 t2 -> do
             dprint "("
             h1 <- hash_type t1
@@ -400,6 +402,7 @@ hash_type t = do
             h2 <- hash_type t2
             dprint ")"
             return $ B tid (toBytes h1 ++ toBytes h2)
+-}
 
         TyCoRep.TyConApp tc ts -> do
             tchash <- hash_tyCon tc
@@ -550,13 +553,14 @@ hash_expr expr = do
             bh <- hash_bound_expr b e Case
             case_th <- hash_type t
 
+            println $ showPpr' alts
+            -- TODO: alts
             return $ B tid $ toBytes bh ++ toBytes case_th
 
     -- TODO: implement
         CoreSyn.Cast e coer -> do
             return $ error "Cast"
 
-    -- TODO: implement
         CoreSyn.Type t -> do
             h <- hash_type t
             return $ H h
