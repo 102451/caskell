@@ -53,7 +53,6 @@ import Caskell.DepGraph
 import Caskell.Hash
 import Caskell.PrimOpHash
 import Caskell.Context
-import Caskell.CoreCompare
 import Caskell.Utility
 
 null_hash = error "null hash"
@@ -80,8 +79,7 @@ hash_core_hashable coredata name_filter hash_function = do
         Just uh -> do
             let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
             if hole cd then do
-                dprint $ sname ++ " is RECURSIVE"
-                return null_hash
+                error $ sname ++ " is RECURSIVE"
             else do
                 dprint $ sname ++ " has been hashed already: " ++ (short_hash_str $ hash uh)
                 return $ hash uh
@@ -295,42 +293,44 @@ hash_algTyCon tc = do
     let bts = toBytes rhsid ++ toBytes graph_hash ++ extra_bts
     return $ get_hash bts
 
+-- this hashes a data con by its arguments, not including the resulting type.
+hash_dataCon_args :: DataCon.DataCon -> CtxMonad (Hash)
+hash_dataCon_args dc = do
+    let dc_name = short_name $ DataCon.dataConName dc
+
+    let sig@(univ, ex, _, _, args, ret) = DataCon.dataConFullSig dc
+    let ret_tyargs = case ret of
+                        -- we do this to get the type arguments for the
+                        -- return value of the data constructor
+                        -- (the resulting type).
+                        -- we can't hash the resulting type here because
+                        -- that would cause infinite recursion.
+                        TyCoRep.TyConApp _ args -> args
+                        _ -> []
+
+    dprint $ "<" ++ dc_name ++ "("
+
+    --tyvar_hashes <- mapM hash_var dcuniv
+    -- dprintln $ concatMap show tyvar_hashes
+    tyvar_hashes <- mapM hash_var univ
+    extyvar_hashes <- mapM hash_var ex
+    args_hashes <- mapM hash_type args
+    ret_tyargs_hashes <- mapM hash_type ret_tyargs
+
+    dprint ")>"
+    let tyvar_bytes = map (toBytes) tyvar_hashes
+    let extyvar_bytes = map (toBytes) extyvar_hashes
+    let args_bytes = map (toBytes) args_hashes
+    let ret_tyargs_bytes = map (toBytes) ret_tyargs_hashes
+
+    return $ get_hash $ tyvar_bytes ++ extyvar_bytes ++ args_bytes ++ ret_tyargs_bytes
+
 -- this gets the type, order and number of data constructor arguments
 -- for each data constructor in the Data type and uniquely hashes them
 hash_dataCons_args :: [DataCon.DataCon] -> CtxMonad (Hash)
 hash_dataCons_args dcs' = do
     -- we sort to get stable and order independent hashes for type constructors
     let dcs = order_dataCons dcs'
-
-    let hash_dataCon_args dc = do
-            let dc_name = short_name $ DataCon.dataConName dc
-
-            let sig@(univ, ex, _, _, args, ret) = DataCon.dataConFullSig dc
-            let ret_tyargs = case ret of
-                                -- we do this to get the type arguments for the
-                                -- return value of the data constructor
-                                -- (the resulting type).
-                                -- we can't hash the resulting type here because
-                                -- that would cause infinite recursion.
-                                TyCoRep.TyConApp _ args -> args
-                                _ -> []
-
-            dprint $ "<" ++ dc_name ++ "("
-
-            --tyvar_hashes <- mapM hash_var dcuniv
-            -- dprintln $ concatMap show tyvar_hashes
-            tyvar_hashes <- mapM hash_var univ
-            extyvar_hashes <- mapM hash_var ex
-            args_hashes <- mapM hash_type args
-            ret_tyargs_hashes <- mapM hash_type ret_tyargs
-
-            dprint ")>"
-            let tyvar_bytes = map (toBytes) tyvar_hashes
-            let extyvar_bytes = map (toBytes) extyvar_hashes
-            let args_bytes = map (toBytes) args_hashes
-            let ret_tyargs_bytes = map (toBytes) ret_tyargs_hashes
-
-            return $ get_hash $ tyvar_bytes ++ extyvar_bytes ++ args_bytes ++ ret_tyargs_bytes
 
     dc_hashes <- mapM hash_dataCon_args dcs
     let dc_bytes = map (toBytes) dc_hashes
@@ -353,7 +353,7 @@ hash_promotedDataCon tc = do
     --let tcname = TyCon.tyConName tc
     let dc = fromJust $ TyCon.isPromotedDataCon_maybe tc
     
-    hash_dataCons_args [dc]
+    hash_dataCon_args dc
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#SynonymTyCon
 hash_typeSynonymTyCon :: TyCon.TyCon -> CtxMonad (Hash)
@@ -446,23 +446,32 @@ hash_dataCon_tything (TyCoRep.AConLike ac) = do
 hash_dataCon_tything _ = return Nothing
                  
 -- stable order
+ordered_tyCon_dataCons :: TyCon.TyCon -> [DataCon.DataCon]
+ordered_tyCon_dataCons tc = dcs' where
+    g = dep_graph_from_tyCon tc
+    ti = fromJust $ tyConRec_index g tc
+    tyRec = get_record g ti
+    dcrs = tyr_dataCons tyRec
+    dcs' = map (dce_dataCon) dcrs
+
 order_dataCons :: [DataCon.DataCon] -> [DataCon.DataCon]
-order_dataCons = sort
-
-dataCon_parent_tycon_dataCons :: DataCon.DataCon -> [DataCon.DataCon]
-dataCon_parent_tycon_dataCons dc = dcs where
-    ty = DataCon.dataConOrigResTy dc
-    tycon = case ty of
-                TyCoRep.TyConApp tc _ -> tc
+order_dataCons [] = []
+order_dataCons dcs@(h:_) = dcs' where
+    ty = DataCon.dataConOrigResTy h
+    tc = case ty of
+                TyCoRep.TyConApp tc' _ -> tc'
                 _ -> error "not a tycon"
-
-    dcs = TyCon.tyConDataCons tycon
+    tmp = ordered_tyCon_dataCons tc
+    dcs' = union dcs tmp
 
 dataCon_stable_tag :: DataCon.DataCon -> Int
 dataCon_stable_tag dc = t where
-    dcs = dataCon_parent_tycon_dataCons dc
-    dcs' = order_dataCons dcs
-    t = fromJust $ findIndex (==dc) dcs'
+    ty = DataCon.dataConOrigResTy dc
+    tc = case ty of
+            TyCoRep.TyConApp tc' _ -> tc'
+            _ -> error "not a tycon"
+    dcs = ordered_tyCon_dataCons tc
+    t = fromJust $ findIndex (==dc) dcs
 
 hash_dataCon :: DataCon.DataCon -> CtxMonad (Hash)
 hash_dataCon dc = do
@@ -716,7 +725,7 @@ hash_id var = do
             dprint "[no definition available]"
             return $ Just (get_hash $ Name.nameStableString vname, True)
           _ -> do
-            dprint "UNFOLDING?"
+            error "UNFOLDING?"
             return $ Just (null_hash, True)
 
 hash_tyVar :: Var.Var -> CtxMonad (Hash)
@@ -755,8 +764,7 @@ hash_literal lit = do
             return $ B tid $ uniqueBytes r
 
         _ -> do
-            dprintln "unknown literal"
-            return $ H null_hash
+            return $ error "unknown literal"
 
     let hash = get_hash hob
 

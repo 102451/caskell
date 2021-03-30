@@ -30,7 +30,6 @@ executable caskell
     Caskell.Bytes
     Caskell.Hash
     Caskell.CoreHash
-    Caskell.CoreCompare
     Caskell.PrimOpHash
     Caskell.Context
     Caskell.Tests
