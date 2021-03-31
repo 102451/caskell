@@ -581,11 +581,7 @@ hash_expr vars expr = do
             return $ B tid $ toBytes ht ++ toBytes h
 
         CoreSyn.Let bnd e -> do
-            bh <- case bnd of
-                    CoreSyn.NonRec b' e' -> 
-                        hash_bound_expr vars b' e' Let
-                        -- TODO: recursive
-
+            bh <- hash_corebind' vars bnd Let
             eh <- hash_expr vars e
 
             return $ B tid $ toBytes bh ++ toBytes eh

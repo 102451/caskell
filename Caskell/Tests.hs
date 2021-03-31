@@ -9,8 +9,9 @@ module Caskell.Tests
     test5, -- typeclasses
     test6, -- functions
     test7, -- recusive functions
+    test8, -- class instance, coercion, cast
 
-    -- TODO: failing instances
+    class_instance_fail,
     run_tests',
 
     scratch,
@@ -375,6 +376,26 @@ test7 = do
     assertEqual "hash f3 == hash f5" (hash f3) (hash f5)
     assertNotEqual "hash f3 /= hash f7" (hash f3) (hash f7)
     
+test8 :: IO ()
+test8 = do
+    ctx <- init_test 8 "class instance, coercion and cast"
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    let t1 = get_hashed_expr "T1"
+    let t2 = get_hashed_expr "T2"
+    
+    assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
+    
+class_instance_fail :: IO ()
+class_instance_fail = do
+    ctx <- compile_file "tests/class_instance_fail.hs" debug_output
+    let get_hashed_expr = flip (get_hashed_expr') ctx
+
+    let t1 = get_hashed_expr "T1"
+    let t2 = get_hashed_expr "T2"
+    
+    assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
+    -- TODO: compare instances
 
 run_tests :: IO ()
 run_tests = do
@@ -385,6 +406,7 @@ run_tests = do
     test5
     test6
     test7
+    test8
 
     putStrLn "all tests passed"
 

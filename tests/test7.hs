@@ -38,4 +38,16 @@ f8 :: [Int] -> Int
 f8 [] = 42
 f8 (_:h) = f5 h
 
+-- recursive let
+f9 :: Int -> Int
+f9 x =
+    let f a b = if a > 0 then f (a - 1) (b + x) else b
+    in f x 0
+
+f10 :: Int -> Int
+f10 x =
+    let f a b = if a > 0 then f (a - 1) (b + x) else b
+    in f x 5
+    
+
 main = return ()
