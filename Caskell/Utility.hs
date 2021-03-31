@@ -10,9 +10,21 @@ module Caskell.Utility
     findIndex_s,
     mtrace,
     showPpr',
-    sortByM
+    sortByM,
+
+    RecDefs,
+    VarStack,
+    CtxVars(..),
+    emptyCtxVars,
+    var_index,
+    rec_var_index,
+    add_rec_vars,
+    local_var_index,
+    add_local_vars
 ) where
 
+import qualified CoreSyn
+import qualified Var
 import qualified Name
 import qualified Debug.Trace
 import Outputable (Outputable, ppr, showSDocUnsafe)
@@ -70,3 +82,29 @@ sortByM cmp xs = do
             LT -> (a:) <$> merge as (b:bs)
             _  -> (b:) <$> merge (a:as) bs
         partition xs = splitAt (length xs `quot` 2) xs
+
+type RecDefs = [CoreSyn.CoreBndr]
+type VarStack = [Var.Var]
+
+-- utility structure to collect local references and recursive vars
+data CtxVars = CtxVars
+    { cv_recs :: RecDefs
+    , cv_local_stack :: VarStack
+    }
+
+emptyCtxVars = CtxVars [] []
+
+var_index :: [Var.Var] -> Var.Var -> Maybe Int
+var_index vars v = findIndex (==v) vars
+
+rec_var_index :: CtxVars -> CoreSyn.CoreBndr -> Maybe Int
+rec_var_index = var_index . cv_recs
+
+add_rec_vars :: CtxVars -> RecDefs -> CtxVars
+add_rec_vars vars recs = vars { cv_recs = cv_recs vars ++ recs }
+
+local_var_index :: CtxVars -> Var.Var -> Maybe Int
+local_var_index = var_index . cv_local_stack
+
+add_local_vars :: CtxVars -> VarStack -> CtxVars
+add_local_vars vars v = vars { cv_local_stack = cv_local_stack vars ++ v }

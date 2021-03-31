@@ -62,6 +62,8 @@ placeholder_hash = get_hash ([]::[Int])
 name_filter :: String -> Bool
 name_filter a = any (flip (isSuffixOf) a) ["$main", "$trModule", "$dIP"]
 
+type CoreExpr = CoreSyn.Expr CoreSyn.CoreBndr
+
 -- main hash function:
 -- takes core data (Expr, Type, DataCon, etc), a filter function and a
 -- function to obtain the hash from the coredata.
@@ -505,42 +507,61 @@ hash_dataCon dc = do
 -- normal expressions
 hash_binds :: CoreSyn.CoreProgram -> CtxMonad ()
 hash_binds binds = do
-    mapM (hash_corebind) binds
+    mapM (flip hash_corebind Module) binds
     return ()
 
-hash_corebind :: CoreSyn.CoreBind -> CtxMonad (Hash)
-hash_corebind (CoreSyn.NonRec b expr) = do
-    hash_bound_expr b expr Module
+hash_corebind' :: CtxVars -> CoreSyn.CoreBind -> ExprScope -> CtxMonad (Hash)
+hash_corebind' vars (CoreSyn.NonRec b expr) scope = do
+    hash_bound_expr vars b expr scope
 
-hash_corebind (CoreSyn.Rec l) = undefined -- TODO: implement
+hash_corebind' vars (CoreSyn.Rec l) scope = do
+    let tmp' = map fst l
+    let nvars = add_rec_vars vars tmp'
 
-type VarStack = [Var.Var]
+    rechashes <- mapM (\(_, e) -> hash_expr nvars e) l
 
-local_var_index :: VarStack -> Var.Var -> Maybe Int
-local_var_index vstack v = findIndex (==v) vstack
+    let recbytes = concatMap (toBytes) rechashes
 
-hash_bound_expr' :: CoreSyn.CoreBndr -> CoreSyn.Expr CoreSyn.CoreBndr -> ExprScope -> VarStack -> CtxMonad (Hash)
-hash_bound_expr' b e s vstack = do
+    let hash_func (b, e) = do
+            let name = Var.varName b
+            let uniq = Name.nameUnique name
+
+            let i = fromJust $ var_index tmp' b
+            let hash = get_hash $ toBytes rec_var_hash_id ++ toBytes i ++ recbytes
+            let hash_data = BoundExpr b e scope
+            let coredata = coreData uniq hash_data True
+
+            hash_core_hashable coredata name_filter (return hash)
+            
+            return hash
+
+    mapM_ (hash_func) l
+
+    return $ get_hash recbytes
+
+
+hash_corebind :: CoreSyn.CoreBind -> ExprScope -> CtxMonad (Hash)
+hash_corebind = hash_corebind' emptyCtxVars
+
+hash_bound_expr :: CtxVars -> CoreSyn.CoreBndr -> CoreExpr -> ExprScope -> CtxMonad (Hash)
+hash_bound_expr vars b e s = do
     let name = Var.varName b
     let uniq = Name.nameUnique name
 
     let hash_data = BoundExpr b e s
     let coredata = coreData uniq hash_data True
 
-    hash_core_hashable coredata name_filter (hash_expr e vstack)
+    hash_core_hashable coredata name_filter (hash_expr vars e)
 
-hash_bound_expr :: CoreSyn.CoreBndr -> CoreSyn.Expr CoreSyn.CoreBndr -> ExprScope -> CtxMonad (Hash)
-hash_bound_expr b e s = hash_bound_expr' b e s []
-
-hash_expr :: CoreSyn.Expr CoreSyn.CoreBndr -> VarStack -> CtxMonad (Hash)
-hash_expr expr vstack = do
+hash_expr :: CtxVars -> CoreExpr -> CtxMonad (Hash)
+hash_expr vars expr = do
     let tid = typeID expr
     let tname = typeName expr
 
     hob <- case expr of
         CoreSyn.Var var -> do
             dprint "Var."
-            h <- hash_var' var vstack
+            h <- hash_var' vars var
             return $ H h
 
         CoreSyn.Lit lit -> do
@@ -548,36 +569,31 @@ hash_expr expr vstack = do
             return $ H h
 
         CoreSyn.App e1 e2 -> do
-            dprint "("
-            b1 <- hash_expr e1 vstack
-            dprint " "
-            b2 <- hash_expr e2 vstack
-            dprint ")"
+            b1 <- hash_expr vars e1
+            b2 <- hash_expr vars e2
             return $ B tid $ toBytes b1 ++ toBytes b2
 
         CoreSyn.Lam b' e -> do
-            dprint $ "(\\" ++ (short_name $ Var.varName b') ++ " -> "
-
-            let nstack = vstack ++ [b']
+            let nvars = add_local_vars vars [b']
             ht <- hash_type $ Var.varType b'
-            h <- hash_expr e nstack
+            h <- hash_expr nvars e
 
-            dprint ")"
             return $ B tid $ toBytes ht ++ toBytes h
 
-        CoreSyn.Let b' e -> do
-            bh <- case b' of
-                    CoreSyn.NonRec b'' e' -> 
-                      hash_bound_expr' b'' e' Let vstack
+        CoreSyn.Let bnd e -> do
+            bh <- case bnd of
+                    CoreSyn.NonRec b' e' -> 
+                        hash_bound_expr vars b' e' Let
+                        -- TODO: recursive
 
-            eh <- hash_expr e vstack
+            eh <- hash_expr vars e
 
             return $ B tid $ toBytes bh ++ toBytes eh
 
         CoreSyn.Case e b t alts -> do
-            bh <- hash_bound_expr b e Case
+            bh <- hash_bound_expr vars b e Case
             case_th <- hash_type t
-            alts_hash <- hash_case_alts alts vstack
+            alts_hash <- hash_case_alts vars alts
 
             return $ B tid $ toBytes bh ++ toBytes case_th ++ toBytes alts_hash
 
@@ -602,22 +618,22 @@ hash_expr expr vstack = do
 
     return hash
 
-hash_case_alts :: [CoreSyn.Alt CoreSyn.CoreBndr] -> VarStack -> CtxMonad (Hash)
-hash_case_alts alts vstack = do
-    hashes <- mapM (flip (hash_case_alt) vstack) alts
+hash_case_alts :: CtxVars -> [CoreSyn.Alt CoreSyn.CoreBndr] -> CtxMonad (Hash)
+hash_case_alts vars alts = do
+    hashes <- mapM (hash_case_alt vars) alts
     let bts = concatMap (toBytes) hashes
 
     return $ get_hash bts
 
-hash_case_alt :: CoreSyn.Alt CoreSyn.CoreBndr -> VarStack -> CtxMonad (Hash)
-hash_case_alt (altcon, vars, e) vstack = do
+hash_case_alt :: CtxVars -> CoreSyn.Alt CoreSyn.CoreBndr -> CtxMonad (Hash)
+hash_case_alt cvars (altcon, vars, e) = do
     let tid = toBytes $ typeID altcon
 
-    let nstack = vstack ++ vars
+    let nvars = add_local_vars cvars vars
 
     altcon_hash <- hash_altcon altcon
     thashes <- mapM (hash_type . Var.varType) vars
-    eh <- hash_expr e nstack
+    eh <- hash_expr nvars e
     
     let altcon_b = toBytes altcon_hash
     let tbytes = concatMap (toBytes) thashes
@@ -634,8 +650,8 @@ hash_altcon ac = do
         CoreSyn.LitAlt lit -> hash_literal lit
         CoreSyn.DEFAULT -> return $ get_hash tid
 
-hash_var' :: Var.Var -> VarStack -> CtxMonad (Hash)
-hash_var' var vstack = do
+hash_var' :: CtxVars -> Var.Var -> CtxMonad (Hash)
+hash_var' vars var = do
     let tname = typeName var
     let vname = Var.varName var
     let uniq = Name.nameUnique vname
@@ -643,7 +659,7 @@ hash_var' var vstack = do
     dprint $ tname ++ "(" ++ short_name vname ++ ")"
 
     -- see if its a local variable on the "stack"
-    let mf = local_var_index vstack var
+    let mf = local_var_index vars var
     case mf of
       Just i -> do
         let t = Var.varType var
@@ -652,53 +668,63 @@ hash_var' var vstack = do
         let h = get_hash $ (toBytes local_var_index_id ++ toBytes i ++ toBytes ht)
         return h
       Nothing -> do
-        -- Find in already hashed values -> return hash
-        mexpr <- mlookup_unique uniq
-        case mexpr of
-          Just uh -> do
-            return $ hash uh
+        -- see if its a recursive expr
+        let rf = rec_var_index vars var
+        case rf of
+          Just i -> do
+            let t = Var.varType var
+            ht <- hash_type t
+
+            let h = get_hash $ (toBytes rec_var_index_id ++ toBytes i ++ toBytes ht)
+            return h
           Nothing -> do
-          -- Find in module -> hash -> return hash
-            mmodexpr <- mlookup_unique_in_module uniq
-            
-            case mmodexpr of
-              Just bind -> do
-                
-                h <- hash_corebind bind 
-                -- add the existing hash to the var
-                uh' <- mlookup_hash h
-                let uh = fromJust uh'
-                let ref = hash_data_ref uh
-                madd_hash (CoreData uniq (Var var) False ref False) h
-                return h
-
+            -- Find in already hashed values -> return hash
+            mexpr <- mlookup_unique uniq
+            case mexpr of
+              Just uh -> do
+                return $ hash uh
               Nothing -> do
-                    -- TODO: differenciate between param
-                if (Var.isId var) then do
-                    mh <- hash_id var
-                    case mh of
-                      Just (h, defless) -> do
-                        if not defless then do
-                            uh' <- mlookup_hash h
-                            let uh = fromJust uh'
-                            let ref = hash_data_ref uh
-                            madd_hash (CoreData uniq (Var var) False ref False) h
-                        else
-                            madd_hash (CoreData uniq (Var var) False Nothing True) h
-                            
-                        return h
-
-                      Nothing -> error "[var not found]"
-
-                else if (Var.isTyVar var) then do
-                    h <- hash_tyVar var
+              -- Find in module -> hash -> return hash
+                mmodexpr <- mlookup_unique_in_module uniq
+                
+                case mmodexpr of
+                  Just bind -> do
+                    
+                    h <- hash_corebind bind Module
+                    -- add the existing hash to the var
+                    uh' <- mlookup_hash h
+                    let uh = fromJust uh'
+                    let ref = hash_data_ref uh
+                    madd_hash (CoreData uniq (Var var) False ref False) h
                     return h
 
-                else 
-                  error "[var not found]"
+                  Nothing -> do
+                        -- TODO: differenciate between param
+                    if (Var.isId var) then do
+                        mh <- hash_id var
+                        case mh of
+                          Just (h, defless) -> do
+                            if not defless then do
+                                uh' <- mlookup_hash h
+                                let uh = fromJust uh'
+                                let ref = hash_data_ref uh
+                                madd_hash (CoreData uniq (Var var) False ref False) h
+                            else
+                                madd_hash (CoreData uniq (Var var) False Nothing True) h
+                                
+                            return h
+
+                          Nothing -> error "[var not found]"
+
+                    else if (Var.isTyVar var) then do
+                        h <- hash_tyVar var
+                        return h
+
+                    else 
+                      error "[var not found]"
 
 hash_var :: Var.Var -> CtxMonad (Hash)
-hash_var v = hash_var' v []
+hash_var v = hash_var' emptyCtxVars v
 
 -- specialization of hash_var that was not found, probably extern
 hash_id :: Var.Var -> CtxMonad (Maybe (Hash, Bool))
@@ -732,7 +758,6 @@ hash_tyVar :: Var.Var -> CtxMonad (Hash)
 hash_tyVar var = do
     let t = Var.varType var
     hash_type t
-    
 
 hash_literal :: Literal.Literal -> CtxMonad (Hash)
 hash_literal lit = do
@@ -1067,6 +1092,8 @@ instance TypeIDAble RecTy where
         Rec _   -> "RecTy.Rec"
 
 local_var_index_id = 0x0A200000 :: Word32
+rec_var_index_id = 0x0A200001 :: Word32
+rec_var_hash_id = 0x0A200002 :: Word32
 
 
 

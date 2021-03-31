@@ -365,6 +365,15 @@ test7 = do
     let f2 = get_hashed_expr "f2"
 
     assertNotEqual "hash f1 /= hash f2" (hash f1) (hash f2)
+
+    let f3 = get_hashed_expr "f3"
+    let f4 = get_hashed_expr "f4"
+    let f5 = get_hashed_expr "f5"
+    let f7 = get_hashed_expr "f7"
+
+    assertNotEqual "hash f3 /= hash f4" (hash f3) (hash f4)
+    assertEqual "hash f3 == hash f5" (hash f3) (hash f5)
+    assertNotEqual "hash f3 /= hash f7" (hash f3) (hash f7)
     
 
 run_tests :: IO ()
