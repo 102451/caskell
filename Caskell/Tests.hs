@@ -19,10 +19,13 @@ module Caskell.Tests
 ) where
 
 import Unique
+import Data.List
 import Data.Maybe
 import Data.Map.MultiKey
 import Control.Monad
 import Control.Exception
+import System.IO
+
 import Caskell.Context
 import Caskell.Compile
 import Caskell.DepGraph
@@ -38,343 +41,177 @@ get_tyDepGraph uh = do
       TyCon tc -> Just $ dep_graph_from_tyCon tc
       _ -> Nothing
 
-
-test_header :: Int -> String -> IO ()
-test_header num description = do
-    putStrLn $ "\ntest " ++ show num ++ ": " ++ description
-
 init_test :: Int -> String -> IO (Context)
 init_test num description = do
-    test_header num description
     compile_file ("tests/test" ++ show num ++ ".hs") debug_output
+
+pass :: IO ()
+pass = putStrLn "passed"
+
+-- parser stuff
+data Test = Test
+    { test_header :: String
+    , test_asserts :: [AssertExpr]
+    }
+    deriving (Eq, Show)
+
+data AssertExpr = AssertExpr
+    { ae_type :: AssertType
+    , ae_val1 :: AssertVal
+    , ae_val2 :: AssertVal
+    , ae_description :: String
+    }
+    deriving (Eq, Show)
+
+newtype AssertVal = AssertVal String deriving (Eq, Show) -- just "hash X"
+assertVal (AssertVal n) = n
+data AssertType = AssertEqual | AssertNotEqual deriving (Eq, Show)
+
+parse_test :: String -> IO Test
+parse_test filepath = do
+    contents <- readFile filepath
+    let ls = lines contents
+    let filtered = filter (isPrefixOf "--" . dropWhile (==' ')) ls
+
+    asserts <- read_asserts_from_test filtered
+    let test = Test "" asserts
+
+    if (not $ Data.List.null filtered) then do
+        let headr = dropWhile (==' ') $ dropWhile (=='-') $ dropWhile (==' ') $ head filtered
+        return $ Test headr asserts
+    else
+        return test
+    
+
+read_asserts_from_test :: [String] -> IO [AssertExpr]
+read_asserts_from_test lines = do
+    let mexprs = map (parse_assert_from_line) lines
+    let mexprs' = filter (isJust) mexprs
+    let exprs = map (fromJust) mexprs'
+
+    return exprs
+    
+parse_assert_from_line :: String -> Maybe AssertExpr
+parse_assert_from_line [] = Nothing
+parse_assert_from_line ('-':'-':t) = parse_assert_from_line t
+parse_assert_from_line (' ':t) = parse_assert_from_line t
+parse_assert_from_line ('a':'s':'s':'e':'r':'t':t) = do
+    (expr, _) <- parse_assert t
+    return expr
+parse_assert_from_line _ = Nothing
+
+parse_assert :: String -> Maybe (AssertExpr, String)
+parse_assert [] = Nothing
+parse_assert (' ':t) = parse_assert t
+parse_assert t = do
+    (e1, t2) <- parse_assert_val t
+    (op, t3) <- parse_assert_type t2
+    (e2, t4) <- parse_assert_val t3
+    let desc = dropWhile (==' ') t4
+    return (AssertExpr op e1 e2 desc, "")
+
+parse_assert_val :: String -> Maybe (AssertVal, String)
+parse_assert_val [] = Nothing
+parse_assert_val (' ':t) = parse_assert_val t
+parse_assert_val ('h':'a':'s':'h':t) = do
+    let t' = dropWhile (==' ') t
+    let name = takeWhile (/=' ') t'
+
+    if Data.List.null name then
+        Nothing
+    else
+        return (AssertVal name, drop (length name) t')
+parse_assert_val _ = Nothing
+
+parse_assert_type :: String -> Maybe (AssertType, String)
+parse_assert_type [] = Nothing
+parse_assert_type (' ':t) = parse_assert_type t
+parse_assert_type ('=':'=':t) = Just (AssertEqual, t)
+parse_assert_type ('/':'=':t) = Just (AssertNotEqual, t)
+parse_assert_type _ = Nothing
+
+-- parsed assert stuff
+assert_test_of_context :: Context -> AssertExpr -> IO ()
+assert_test_of_context ctx (AssertExpr t v1 v2 desc) = do
+    let e1 = assertVal v1
+    let e2 = assertVal v2
+    let he1 = get_hashed_expr' e1 ctx 
+    let he2 = get_hashed_expr' e2 ctx
+    let h1 = hash he1
+    let h2 = hash he2
+    let s = assertion_text t v1 v2
+
+    when (not $ Data.List.null desc) $ do
+        putStrLn $ "checking " ++ desc
+        
+    assertT t s h1 h2
+
+assertion_text :: AssertType -> AssertVal -> AssertVal -> String
+assertion_text t v1 v2 = s where
+    ts = case t of
+            AssertEqual -> "=="
+            AssertNotEqual -> "/="
+    s1 = case v1 of
+            AssertVal n -> "hash " ++ n
+    s2 = case v2 of
+            AssertVal n -> "hash " ++ n
+    s = s1 ++ " " ++ ts ++ " " ++ s2
+
+assertT :: Eq a => AssertType -> String -> a -> a -> IO ()
+assertT AssertEqual = assertEqual
+assertT AssertNotEqual = assertNotEqual
     
 assertEqual :: Eq a => String -> a -> a -> IO ()
 assertEqual assertion x y = unless (x == y) (error $ "assertion failed: " ++ assertion)
 
 assertNotEqual :: Eq a => String -> a -> a -> IO ()
 assertNotEqual assertion x y = when (x == y) (error $ "assertion failed: " ++ assertion)
+    
+run_asserts :: Context -> [AssertExpr] -> IO (Int)
+run_asserts ctx asserts =
+    if Data.List.null asserts then do
+      putStrLn "warning: no asserts found"
+      return 0
+    else do
+      mapM_ (assert_test_of_context ctx) asserts
+      return (length asserts)
 
-pass :: IO ()
-pass = putStrLn "passed"
 
 -- error when not found
 get_hashed_expr' :: String -> Context -> UniqueHash
 get_hashed_expr' var ctx = fromJust $ lookup_name var ctx
 
-test1 :: IO ()
-test1 = do
-    ctx <- init_test 1 "number literal and reference equality"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
+-- generic test
+test :: String -> IO (Int)
+test testfile = do
+    ctx <- compile_file testfile debug_output
+    test <- parse_test testfile
 
-    let a = get_hashed_expr "a"
-    let b = get_hashed_expr "b"
-    let c = get_hashed_expr "c"
-    let d = get_hashed_expr "d"
-    let e = get_hashed_expr "e"
+    putStrLn $ "\n" ++ test_header test
+    i <- run_asserts ctx (test_asserts test)
+    putStrLn $ "\npassed " ++ show i ++ " tests"
+    return i
 
-    assertEqual "hash a == hash b" (hash a) (hash b)
-    assertEqual "hash a == hash c" (hash a) (hash c)
-    assertEqual "hash a == hash d" (hash a) (hash d)
-    assertEqual "hash b == hash c" (hash b) (hash c)
-    assertEqual "hash b == hash d" (hash b) (hash d)
-    assertEqual "hash c == hash d" (hash c) (hash d)
+test1 :: IO (Int)
+test1 = test "tests/test1.hs"
 
-    assertNotEqual "hash a /= hash e" (hash a) (hash e)
+test2 :: IO (Int)
+test2 = test "tests/test2.hs"
 
-    pass
+test3 :: IO (Int)
+test3 = test "tests/test3.hs"
 
-test2 :: IO ()
-test2 = do
-    ctx <- init_test 2 "literals test"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
+test4 :: IO (Int)
+test4 = test "tests/test4.hs"
 
-    let int5   = get_hashed_expr "int5"
-    let int5_2 = get_hashed_expr "int5_2"
-    let int3   = get_hashed_expr "int3"
+test5 :: IO (Int)
+test5 = test "tests/test5.hs"
 
-    assertEqual "hash int5 == hash int5_2" (hash int5) (hash int5_2)
-    assertNotEqual "hash int5 /= hash int3" (hash int5) (hash int3)
+test6 :: IO (Int)
+test6 = test "tests/test6.hs"
 
-    let float3'14   = get_hashed_expr "float3'14"
-    let float3'14_2 = get_hashed_expr "float3'14_2"
-    let float2'71   = get_hashed_expr "float2'71"
-
-    assertEqual "hash float3'14 == hash float3'14_2" (hash float3'14) (hash float3'14_2)
-    assertNotEqual "hash float3'14 /= hash float2'71" (hash float3'14) (hash float2'71)
-
-    let double3'14   = get_hashed_expr "double3'14"
-    let double3'14_2 = get_hashed_expr "double3'14_2"
-    let double2'71   = get_hashed_expr "double2'71"
-
-    assertEqual "hash double3'14 == hash double3'14_2" (hash double3'14) (hash double3'14_2)
-    assertNotEqual "hash double3'14 /= hash double2'71" (hash double3'14) (hash double2'71)
-
-    let charA   = get_hashed_expr "charA"
-    let charA_2 = get_hashed_expr "charA_2"
-    let charB   = get_hashed_expr "charB"
-
-    assertEqual "hash charA == hash charA_2" (hash charA) (hash charA_2)
-    assertNotEqual "hash charA /= hash charB" (hash charA) (hash charB)
-
-    let stringHello   = get_hashed_expr "stringHello"
-    let stringHello_2 = get_hashed_expr "stringHello_2"
-    let stringWorld   = get_hashed_expr "stringWorld"
-
-    assertEqual "hash stringHello == hash stringHello_2" (hash stringHello) (hash stringHello_2)
-    assertNotEqual "hash stringHello /= hash stringWorld" (hash stringHello) (hash stringWorld)
-
-    pass
-
-test3 :: IO ()
-test3 = do
-    ctx <- init_test 3 "simple data types"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let t1 = get_hashed_expr "T1"
-    let t2 = get_hashed_expr "T2"
-    let t3 = get_hashed_expr "T3"
-
-    assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
-    assertNotEqual "hash T1 /= hash T3" (hash t1) (hash t3)
-
-    let t4 = get_hashed_expr "T4"
-    let t5 = get_hashed_expr "T5"
-    let t6 = get_hashed_expr "T6"
-
-    assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
-    assertNotEqual "hash T4 /= hash T6" (hash t4) (hash t6)
-
-    -- let a = get_hashed_expr "A"
-    let a = get_hashed_expr "A"
-    let b = get_hashed_expr "B"
-    let c = get_hashed_expr "C"
-    let d = get_hashed_expr "D"
-    let e = get_hashed_expr "E"
-
-    assertNotEqual "hash A /= hash B" (hash a) (hash b)
-    assertNotEqual "hash C /= hash D" (hash c) (hash d)
-    assertEqual "hash A == hash C" (hash a) (hash c)
-    assertEqual "hash B == hash D" (hash b) (hash d)
-
-    let h = get_hashed_expr "H"
-    let i = get_hashed_expr "I"
-    let j = get_hashed_expr "J"
-    let k = get_hashed_expr "K"
-    let l = get_hashed_expr "L"
-    let m = get_hashed_expr "M"
-
-    assertEqual "hash H == hash K" (hash h) (hash k)
-    assertEqual "hash I == hash J" (hash i) (hash j)
-    assertNotEqual "hash H /= hash L" (hash h) (hash l)
-    -- position matters within the same tycon
-    assertNotEqual "hash L /= hash M" (hash l) (hash m)
-
-    let t7  = get_hashed_expr "T7"
-    let t8  = get_hashed_expr "T8"
-    let t9  = get_hashed_expr "T9"
-    let t10 = get_hashed_expr "T10"
-
-    assertEqual "hash T7 == hash T8" (hash t7) (hash t8)
-    assertNotEqual "hash T7 /= hash T9" (hash t7) (hash t9)
-    assertNotEqual "hash T7 /= hash T10" (hash t7) (hash t10)
-    assertNotEqual "hash T9 /= hash T10" (hash t9) (hash t10)
-
-    let o = get_hashed_expr "O"
-    let p = get_hashed_expr "P"
-    let q = get_hashed_expr "Q"
-    let r = get_hashed_expr "R"
-
-    assertEqual "hash O == hash P" (hash o) (hash p)
-    assertNotEqual "hash O /= hash Q" (hash o) (hash q)
-    assertNotEqual "hash O /= hash R" (hash o) (hash r)
-
-    let t11 = get_hashed_expr "T11"
-    let t12 = get_hashed_expr "T12"
-
-    assertEqual "hash T11 == hash T12" (hash t11) (hash t12)
-    assertNotEqual "hash T11 /= hash T4" (hash t11) (hash t4)
-    assertNotEqual "hash T11 /= hash T5" (hash t11) (hash t5)
-
-    let t13 = get_hashed_expr "T13"
-    let t14 = get_hashed_expr "T14"
-
-    assertEqual "hash T13 == hash T14" (hash t13) (hash t14)
-
-    let t13' = get_hashed_expr "T13'"
-    let t14' = get_hashed_expr "T14'"
-
-    assertNotEqual "hash T13' /= hash T14'" (hash t13') (hash t14')
-
-    let s = get_hashed_expr "S"
-    let t = get_hashed_expr "T"
-    let u = get_hashed_expr "U"
-    let v = get_hashed_expr "V"
-
-    assertEqual "hash S == hash V" (hash s) (hash v)
-    assertEqual "hash T == hash U" (hash t) (hash u)
-    assertNotEqual "hash S /= hash H" (hash s) (hash h)
-    -- T and I look similar but produce different Types,
-    -- therefore hash is different
-    assertNotEqual "hash T /= hash I" (hash t) (hash i)
-
-    let w = get_hashed_expr "W"
-    let x = get_hashed_expr "X"
-    let y = get_hashed_expr "Y"
-    let z = get_hashed_expr "Z"
-
-    assertEqual "hash W == hash Z" (hash w) (hash z)
-    assertEqual "hash X == hash Y" (hash x) (hash y)
-    assertNotEqual "hash W /= hash Y" (hash w) (hash y)
-    assertNotEqual "hash X /= hash Z" (hash x) (hash z)
-
-    let t15 = get_hashed_expr "T15"
-    let t16 = get_hashed_expr "T16"
-    let t17 = get_hashed_expr "T17"
-
-    assertEqual "hash T15 == hash T16" (hash t15) (hash t16)
-    assertNotEqual "hash T15 /= hash T17" (hash t15) (hash t17)
-
-    let aa = get_hashed_expr "AA"
-    let ab = get_hashed_expr "AB"
-    let ac = get_hashed_expr "AC"
-
-    assertEqual "hash AA == hash AB" (hash aa) (hash ab)
-    assertNotEqual "hash AA /= hash AC" (hash aa) (hash ac)
-    
-    let t18 = get_hashed_expr "T18"
-    let t19 = get_hashed_expr "T19"
-    let t20 = get_hashed_expr "T20"
-
-    assertEqual "hash T18 == hash T19" (hash t18) (hash t19)
-    assertNotEqual "hash T18 == hash T20" (hash t18) (hash t20)
-    pass
-
-test4 :: IO ()
-test4 = do
-    ctx <- init_test 4 "recursive data types"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let mylist = get_hashed_expr "MyList"
-    let t1 = get_hashed_expr "T1"
-    let t2 = get_hashed_expr "T2"
-    let t3 = get_hashed_expr "T3"
-
-    assertEqual "hash MyList == hash T1" (hash mylist) (hash t1)
-    assertNotEqual "hash T1 /= hash T2" (hash t1) (hash t2)
-    assertNotEqual "hash T1 /= hash T3" (hash t1) (hash t3)
-    assertNotEqual "hash T2 /= hash T3" (hash t2) (hash t3)
-
-    let x = get_hashed_expr "X"
-    let y = get_hashed_expr "Y"
-    let a = get_hashed_expr "A"
-    let b = get_hashed_expr "B"
-    let c = get_hashed_expr "C"
-    let d = get_hashed_expr "D"
-
-    assertNotEqual "hash X /= hash A" (hash x) (hash a)
-    assertNotEqual "hash X /= hash C" (hash x) (hash c)
-    assertNotEqual "hash A /= hash C" (hash a) (hash c)
-    assertNotEqual "hash Y /= hash B" (hash y) (hash b)
-    assertNotEqual "hash Y /= hash D" (hash y) (hash d)
-    assertNotEqual "hash B /= hash D" (hash b) (hash d)
-
-    let t4 = get_hashed_expr "T4"
-    let t5 = get_hashed_expr "T5"
-    let t6 = get_hashed_expr "T6"
-
-    assertEqual "hash T4 == hash T5" (hash t4) (hash t5)
-    assertEqual "hash T5 == hash T6" (hash t5) (hash t6)
-    assertEqual "hash T6 == hash T4" (hash t6) (hash t4)
-
-    let e = get_hashed_expr "E"
-    let f = get_hashed_expr "F"
-    let g = get_hashed_expr "G"
-    let h = get_hashed_expr "H"
-    let i = get_hashed_expr "I"
-    let j = get_hashed_expr "J"
-
-    assertEqual "hash E == hash G" (hash e) (hash g)
-    assertEqual "hash F == hash H" (hash f) (hash h)
-    assertEqual "hash H == hash I" (hash h) (hash i)
-
-    let t7 = get_hashed_expr "T7"
-    let t9 = get_hashed_expr "T9"
-
-    assertNotEqual "hash T7 /= hash T9" (hash t7) (hash t9)
-    pass
-
-test5 :: IO ()
-test5 = do
-    ctx <- init_test 5 "typeclasses"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let c1 = get_hashed_expr "C1"
-    let c2 = get_hashed_expr "C2"
-    let c3 = get_hashed_expr "C3"
-
-    assertEqual "hash C1 == hash C2" (hash c1) (hash c2)
-    assertNotEqual "hash C1 /= hash C3" (hash c1) (hash c3)
-
-    pass
-
-test6 :: IO ()
-test6 = do
-    ctx <- init_test 6 "functions"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let f1 = get_hashed_expr "f1"
-    let f2 = get_hashed_expr "f2"
-    let f3 = get_hashed_expr "f3"
-
-    assertEqual "hash f1 == hash f2" (hash f1) (hash f2)
-    assertNotEqual "hash f1 /= hash f3" (hash f1) (hash f3)
-
-    let fl = get_hashed_expr "fl"
-    let fr = get_hashed_expr "fr"
-    let fl2 = get_hashed_expr "fl2"
-    let fl3 = get_hashed_expr "fl3"
-
-    assertNotEqual "hash fl /= hash fr" (hash fl) (hash fr)
-    assertNotEqual "hash fl /= hash fl2" (hash fl) (hash fl2)
-    assertNotEqual "hash fl /= hash fl3" (hash fl) (hash fl3)
-
-    let fc1 = get_hashed_expr "fc1"
-    let fc2 = get_hashed_expr "fc2"
-    let fc3 = get_hashed_expr "fc3"
-
-    assertEqual "hash fc1 == hash fc2" (hash fc1) (hash fc2)
-    assertNotEqual "hash fc1 /= hash fc3" (hash fc1) (hash fc3)
-
-    let fcb1 = get_hashed_expr "fcb1"
-    let fcb2 = get_hashed_expr "fcb2"
-
-    assertNotEqual "hash fcb1 /= hash fcb2" (hash fcb1) (hash fcb2)
-
-    let flet1 = get_hashed_expr "flet1"
-    let flet2 = get_hashed_expr "flet2"
-
-    assertNotEqual "hash flet1 /= hash flet2" (hash flet1) (hash flet2)
-
-    pass
-
-test7 :: IO ()
-test7 = do
-    ctx <- init_test 7 "recursive functions"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let f1 = get_hashed_expr "f1"
-    let f2 = get_hashed_expr "f2"
-
-    assertNotEqual "hash f1 /= hash f2" (hash f1) (hash f2)
-
-    let f3 = get_hashed_expr "f3"
-    let f4 = get_hashed_expr "f4"
-    let f5 = get_hashed_expr "f5"
-    let f7 = get_hashed_expr "f7"
-
-    assertNotEqual "hash f3 /= hash f4" (hash f3) (hash f4)
-    assertEqual "hash f3 == hash f5" (hash f3) (hash f5)
-    assertNotEqual "hash f3 /= hash f7" (hash f3) (hash f7)
+test7 :: IO (Int)
+test7 = test "tests/test7.hs"
     
 test8 :: IO ()
 test8 = do
@@ -399,16 +236,11 @@ class_instance_fail = do
 
 run_tests :: IO ()
 run_tests = do
-    test1
-    test2
-    test3
-    test4
-    test5
-    test6
-    test7
-    test8
+    testscount <- sequence [test1, test2, test3, test4, test5, test6, test7]
+    let numtests = sum testscount
 
-    putStrLn "all tests passed"
+    putStrLn "-----------------------"
+    putStrLn $ "passed all " ++ show numtests ++ " tests"
 
 
 -- ETC

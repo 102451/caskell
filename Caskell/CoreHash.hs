@@ -105,6 +105,40 @@ hash_core_hashable coredata name_filter hash_function = do
                 dprintln "filtered"
                 return placeholder_hash
 
+-- same thing except overwrites existing hashes
+hash_core_hashable_nolookup :: CoreData -> (String -> Bool) -> CtxMonad (Hash) -> CtxMonad (Hash)
+hash_core_hashable_nolookup coredata name_filter hash_function = do
+    let name = fromJust $ Caskell.Context.name $ hash_data coredata
+    let sname = short_name name
+    let uniq = Name.nameUnique name
+    mexpr <- mlookup_unique uniq
+
+    case mexpr of
+        Just uh -> do
+            let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
+            when (hole cd) $ do
+                error $ sname ++ " is RECURSIVE"
+
+        _ -> return ()
+
+    let fullname = Name.nameStableString name
+
+    if (not $ name_filter fullname) then do
+        madd_hash coredata placeholder_hash
+
+        hash <- hash_function
+        dprintln ""
+
+        mdelete_by_unique uniq
+
+        let coredata' = coredata { hole = False }
+        madd_hash coredata' hash
+
+        return hash
+    else do
+        dprintln "filtered"
+        return placeholder_hash
+
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
 hash_module guts@(GHC.CoreModule _ types binds _) = do
@@ -511,7 +545,7 @@ hash_binds binds = do
     return ()
 
 hash_corebind' :: CtxVars -> CoreSyn.CoreBind -> ExprScope -> CtxMonad (Hash)
-hash_corebind' vars (CoreSyn.NonRec b expr) scope = do
+hash_corebind' vars e@(CoreSyn.NonRec b expr) scope = do
     hash_bound_expr vars b expr scope
 
 hash_corebind' vars (CoreSyn.Rec l) scope = do
@@ -531,7 +565,9 @@ hash_corebind' vars (CoreSyn.Rec l) scope = do
             let hash_data = BoundExpr b e scope
             let coredata = coreData uniq hash_data True
 
-            hash_core_hashable coredata name_filter (return hash)
+            when (scope == Module) $ do
+                hash_core_hashable coredata name_filter (return hash)
+                return ()
             
             return hash
 
