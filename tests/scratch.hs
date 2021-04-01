@@ -1,6 +1,20 @@
-f9 :: Int -> Int
-f9 x =
-    let f a b = if a > 0 then f (a - 1) (b + x) else b
-    in f x 0
+data T1 = A | B
+data T2 = C | D
 
-main = undefined
+toInt :: Integral a => a -> Int
+toInt x = fromIntegral x :: Int
+
+{-
+class CL a where
+    func :: a -> Int
+
+instance CL T1 where
+    func A = 1
+    func B = 2
+
+instance CL T2 where
+    func C = 1
+    func D = 2
+-}
+
+main = return ()

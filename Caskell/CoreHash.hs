@@ -593,9 +593,11 @@ hash_expr vars expr = do
 
             return $ B tid $ toBytes bh ++ toBytes case_th ++ toBytes alts_hash
 
-    -- TODO: implement
         CoreSyn.Cast e coer -> do
-            return $ error "Cast"
+            ch <- hash_coercion coer
+            eh <- hash_expr vars e
+
+            return $ B tid $ toBytes eh ++ toBytes ch
 
         CoreSyn.Type t -> do
             h <- hash_type t
@@ -613,6 +615,11 @@ hash_expr vars expr = do
     let hash = get_hash hob
 
     return hash
+
+hash_coercion :: TyCoRep.Coercion -> CtxMonad (Hash)
+hash_coercion coer = do
+    -- TODO: implement
+    error "coercion"
 
 hash_case_alts :: CtxVars -> [CoreSyn.Alt CoreSyn.CoreBndr] -> CtxMonad (Hash)
 hash_case_alts vars alts = do
