@@ -105,39 +105,11 @@ hash_core_hashable coredata name_filter hash_function = do
                 dprintln "filtered"
                 return placeholder_hash
 
--- same thing except overwrites existing hashes
-hash_core_hashable_nolookup :: CoreData -> (String -> Bool) -> CtxMonad (Hash) -> CtxMonad (Hash)
-hash_core_hashable_nolookup coredata name_filter hash_function = do
-    let name = fromJust $ Caskell.Context.name $ hash_data coredata
-    let sname = short_name name
-    let uniq = Name.nameUnique name
-    mexpr <- mlookup_unique uniq
-
-    case mexpr of
-        Just uh -> do
-            let cd = fromJust $ Caskell.Context.lookup uniq $ hash_core_data uh
-            when (hole cd) $ do
-                error $ sname ++ " is RECURSIVE"
-
-        _ -> return ()
-
-    let fullname = Name.nameStableString name
-
-    if (not $ name_filter fullname) then do
-        madd_hash coredata placeholder_hash
-
-        hash <- hash_function
-        dprintln ""
-
-        mdelete_by_unique uniq
-
-        let coredata' = coredata { hole = False }
-        madd_hash coredata' hash
-
-        return hash
-    else do
-        dprintln "filtered"
-        return placeholder_hash
+show_var :: Var.Var -> String
+show_var v = s where
+    n = Var.varName v
+    u = Var.varUnique v
+    s = short_name n ++ " " ++ show u
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/GHC.html#CoreModule
 hash_module :: GHC.CoreModule -> CtxMonad ()
@@ -654,8 +626,151 @@ hash_expr vars expr = do
 
 hash_coercion :: TyCoRep.Coercion -> CtxMonad (Hash)
 hash_coercion coer = do
-    -- TODO: implement
-    error "coercion"
+    let tid = typeID coer
+    
+    hob <- case coer of
+            TyCoRep.Refl t -> do
+              tb <- toBytes <$> hash_type t
+              return $ B tid tb
+
+            TyCoRep.GRefl r t m -> do
+              let rb = toBytes r
+              tb <- toBytes <$> hash_type t
+              mb <- toBytes <$> hash_mcoercion m
+
+              return $ B tid $ concat [rb, tb, mb]
+
+            TyCoRep.TyConAppCo r tc coers -> do
+              let rb = toBytes r
+              tcb <- toBytes <$> hash_tyCon tc
+              chs <- mapM (hash_coercion) coers
+              let cbs = map toBytes chs
+
+              return $ B tid $ concat $ [rb, tcb] ++ cbs
+
+            TyCoRep.AppCo c1 c2 -> do
+              cb1 <- toBytes <$> hash_coercion c1
+              cb2 <- toBytes <$> hash_coercion c2
+
+              return $ B tid $ concat [cb1, cb2]
+
+            TyCoRep.ForAllCo v c1 c2 -> do
+              vb <- toBytes <$> hash_var v
+              cb1 <- toBytes <$> hash_coercion c1
+              cb2 <- toBytes <$> hash_coercion c2
+
+              return $ B tid $ concat [vb, cb1, cb2]
+
+            TyCoRep.FunCo r c1 c2 -> do
+              let rb = toBytes r
+              cb1 <- toBytes <$> hash_coercion c1
+              cb2 <- toBytes <$> hash_coercion c2
+
+              return $ B tid $ concat [rb, cb1, cb2]
+              
+            TyCoRep.CoVarCo v -> do
+              vb <- toBytes <$> hash_var v
+              return $ B tid vb
+              
+            TyCoRep.AxiomInstCo coax i coers -> do
+              coaxb <- toBytes <$> hash_coaxiom coax
+              let ib = toBytes i
+              chs <- mapM (hash_coercion) coers
+              let cbs = map toBytes chs
+
+              return $ B tid $ concat $ [coaxb, ib] ++ cbs
+
+            TyCoRep.AxiomRuleCo rule coers -> do
+              ruleb <- toBytes <$> hash_coAxiomRule rule
+              chs <- mapM (hash_coercion) coers
+              let cbs = map toBytes chs
+
+              return $ B tid $ concat $ ruleb : cbs
+              
+            TyCoRep.UnivCo univ r t1 t2 -> do
+              univb <- toBytes <$> hash_univCoProvenance univ
+              let rb = toBytes r
+              tb1 <- toBytes <$> hash_type t1
+              tb2 <- toBytes <$> hash_type t2
+
+              return $ B tid $ concat [univb, rb, tb1, tb2]
+              
+            TyCoRep.SymCo c -> do
+              ch <- hash_coercion c
+              return $ H ch
+
+            TyCoRep.TransCo c1 c2 -> do
+              cb1 <- toBytes <$> hash_coercion c1
+              cb2 <- toBytes <$> hash_coercion c2
+
+              return $ B tid $ concat [cb1, cb2]
+
+            TyCoRep.NthCo r i c -> do
+              let rb = toBytes r
+              let ib = uniqueBytes i
+              cb <- toBytes <$> hash_coercion c
+
+              return $ B tid $ concat [rb, ib, cb]
+
+            TyCoRep.LRCo lr c -> do
+              let lrb = toBytes lr
+              cb <- toBytes <$> hash_coercion c
+
+              return $ B tid $ concat [lrb, cb]
+
+            TyCoRep.InstCo c1 c2 -> do
+              cb1 <- toBytes <$> hash_coercion c1
+              cb2 <- toBytes <$> hash_coercion c2
+
+              return $ B tid $ concat [cb1, cb2]
+
+            TyCoRep.KindCo c -> do
+              cb <- toBytes <$> hash_coercion c
+              return $ B tid cb
+
+            TyCoRep.SubCo c -> do
+              cb <- toBytes <$> hash_coercion c
+              return $ B tid cb
+
+            _ -> return $ B tid []
+
+    let h = get_hash hob
+    return h
+
+hash_mcoercion :: TyCoRep.MCoercion -> CtxMonad (Hash)
+hash_mcoercion coer = do
+    let tib = toBytes $ typeID coer
+
+    bs <- case coer of
+            TyCoRep.MRefl -> return []
+            TyCoRep.MCo co -> toBytes <$> hash_coercion co
+
+    let h = get_hash $ tib ++ bs
+    return h
+
+hash_univCoProvenance :: TyCoRep.UnivCoProvenance -> CtxMonad (Hash)
+hash_univCoProvenance univ = do
+    let tib = toBytes $ typeID univ
+
+    bs <- case univ of
+            TyCoRep.UnsafeCoerceProv -> return []
+            TyCoRep.PhantomProv coer -> do
+              h <- hash_coercion coer
+              return [toBytes h]
+            TyCoRep.ProofIrrelProv coer -> do
+              h <- hash_coercion coer
+              return [toBytes h]
+            TyCoRep.PluginProv s -> return [uniqueBytes s]
+
+    return $ get_hash $ concat $ tib : bs
+
+hash_coAxiomRule :: CoAxiom.CoAxiomRule -> CtxMonad (Hash)
+hash_coAxiomRule coaxr = do
+    let tib = toBytes $ typeID coaxr
+    let rbs = map (toBytes) $ CoAxiom.coaxrAsmpRoles coaxr
+    let rb = toBytes $ CoAxiom.coaxrRole coaxr
+    -- cant really hash a member function
+    return $ get_hash $ concat $ tib : rbs ++ [rb]
 
 hash_case_alts :: CtxVars -> [CoreSyn.Alt CoreSyn.CoreBndr] -> CtxMonad (Hash)
 hash_case_alts vars alts = do
@@ -740,14 +855,18 @@ hash_var' vars var = do
                   Nothing -> do
                         -- TODO: differenciate between param
                     if (Var.isId var) then do
-                        mh <- hash_id var
+                        mh <- hash_id vars var
                         case mh of
                           Just (h, defless) -> do
                             if not defless then do
                                 uh' <- mlookup_hash h
-                                let uh = fromJust uh'
-                                let ref = hash_data_ref uh
-                                madd_hash (CoreData uniq (Var var) False ref False) h
+                                let muh = uh'
+                                case muh of
+                                  Just uh -> do
+                                    let ref = hash_data_ref uh
+                                    madd_hash (CoreData uniq (Var var) False ref defless) h
+                                  Nothing ->
+                                    madd_hash (CoreData uniq (Var var) False Nothing defless) h
                             else
                                 madd_hash (CoreData uniq (Var var) False Nothing True) h
                                 
@@ -766,8 +885,8 @@ hash_var :: Var.Var -> CtxMonad (Hash)
 hash_var v = hash_var' emptyCtxVars v
 
 -- specialization of hash_var that was not found, probably extern
-hash_id :: Var.Var -> CtxMonad (Maybe (Hash, Bool))
-hash_id var = do
+hash_id :: CtxVars -> Var.Var -> CtxMonad (Maybe (Hash, Bool))
+hash_id vars var = do
     let vname = Var.varName var
     let uniq = Name.nameUnique vname
     let details = Var.idDetails var
@@ -789,9 +908,12 @@ hash_id var = do
           CoreSyn.NoUnfolding -> do
             dprint "[no definition available]"
             return $ Just (get_hash $ Name.nameStableString vname, True)
-          _ -> do
-            error "UNFOLDING?"
-            return $ Just (null_hash, True)
+          CoreSyn.CoreUnfolding{} -> do
+            let expr = CoreSyn.uf_tmpl unfold
+            h <- hash_expr vars expr
+            return $ Just (h, True)
+          _ ->
+            error "unknown unfolding"
 
 hash_tyVar :: Var.Var -> CtxMonad (Hash)
 hash_tyVar var = do
@@ -937,6 +1059,26 @@ instance TypeIDAble TyCoRep.Coercion where
       TyCoRep.KindCo _          -> 0x0000600F
       TyCoRep.SubCo _           -> 0x00006010
       TyCoRep.HoleCo _          -> 0x00006011
+
+    typeName x = case x of
+      TyCoRep.Refl _            -> "Refl"
+      TyCoRep.GRefl _ _ _       -> "GRefl"
+      TyCoRep.TyConAppCo _ _ _  -> "TyConAppCo"
+      TyCoRep.AppCo _ _         -> "AppCo"
+      TyCoRep.ForAllCo _ _ _    -> "ForAllCo"
+      TyCoRep.FunCo _ _ _       -> "FunCo"
+      TyCoRep.CoVarCo _         -> "CoVarCo"
+      TyCoRep.AxiomInstCo _ _ _ -> "AxiomInstCo"
+      TyCoRep.AxiomRuleCo _ _   -> "AxiomRuleCo"
+      TyCoRep.UnivCo _ _ _ _    -> "UnivCo"
+      TyCoRep.SymCo _           -> "SymCo"
+      TyCoRep.TransCo _ _       -> "TransCo"
+      TyCoRep.NthCo _ _ _       -> "NthCo"
+      TyCoRep.LRCo _ _          -> "LRCo"
+      TyCoRep.InstCo _ _        -> "InstCo"
+      TyCoRep.KindCo _          -> "KindCo"
+      TyCoRep.SubCo _           -> "SubCo"
+      TyCoRep.HoleCo _          -> "HoleCo"
 
 instance TypeIDAble TyCoRep.MCoercion where
     typeID x = case x of

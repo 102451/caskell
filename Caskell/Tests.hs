@@ -11,7 +11,7 @@ module Caskell.Tests
     test7, -- recusive functions
     test8, -- class instance, coercion, cast
 
-    class_instance_fail,
+    class_instance_fail_test,
     run_tests',
 
     scratch,
@@ -192,51 +192,21 @@ test testfile = do
     putStrLn $ "\npassed " ++ show i ++ " tests"
     return i
 
-test1 :: IO (Int)
 test1 = test "tests/test1.hs"
-
-test2 :: IO (Int)
 test2 = test "tests/test2.hs"
-
-test3 :: IO (Int)
 test3 = test "tests/test3.hs"
-
-test4 :: IO (Int)
 test4 = test "tests/test4.hs"
-
-test5 :: IO (Int)
 test5 = test "tests/test5.hs"
-
-test6 :: IO (Int)
 test6 = test "tests/test6.hs"
-
-test7 :: IO (Int)
 test7 = test "tests/test7.hs"
+test8 = test "tests/test8.hs"
     
-test8 :: IO ()
-test8 = do
-    ctx <- init_test 8 "class instance, coercion and cast"
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let t1 = get_hashed_expr "T1"
-    let t2 = get_hashed_expr "T2"
-    
-    assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
-    
-class_instance_fail :: IO ()
-class_instance_fail = do
-    ctx <- compile_file "tests/class_instance_fail.hs" debug_output
-    let get_hashed_expr = flip (get_hashed_expr') ctx
-
-    let t1 = get_hashed_expr "T1"
-    let t2 = get_hashed_expr "T2"
-    
-    assertEqual "hash T1 == hash T2" (hash t1) (hash t2)
-    -- TODO: compare instances
+class_instance_fail_test :: IO (Int)
+class_instance_fail_test = test "tests/class_instance_fail.hs"
 
 run_tests :: IO ()
 run_tests = do
-    testscount <- sequence [test1, test2, test3, test4, test5, test6, test7]
+    testscount <- sequence [test1, test2, test3, test4, test5, test6, test7, test8, class_instance_fail_test]
     let numtests = sum testscount
 
     putStrLn "-----------------------"
@@ -254,10 +224,7 @@ scratch = do
     ctx <- compile_file "tests/scratch.hs" debug_output
     let get_hashed_expr = flip (get_hashed_expr') ctx
     
-    let fl = get_hashed_expr "fl"
-    let fr = get_hashed_expr "fr"
-    putStrLn $ show fl
-    putStrLn $ show fr
+    putStrLn $ show ctx
 
 scratch' :: IO ()
 scratch' = compile_file' "tests/scratch.hs"
