@@ -10,6 +10,7 @@ module Caskell.Tests
     test6, -- functions
     test7, -- recusive functions
     test8, -- class instance, coercion, cast
+    test9, -- newtypes
 
     class_instance_fail_test,
     run_tests',
@@ -200,13 +201,14 @@ test5 = test "tests/test5.hs"
 test6 = test "tests/test6.hs"
 test7 = test "tests/test7.hs"
 test8 = test "tests/test8.hs"
+test9 = test "tests/test9.hs"
     
 class_instance_fail_test :: IO (Int)
 class_instance_fail_test = test "tests/class_instance_fail.hs"
 
 run_tests :: IO ()
 run_tests = do
-    testscount <- sequence [test1, test2, test3, test4, test5, test6, test7, test8, class_instance_fail_test]
+    testscount <- sequence [test1, test2, test3, test4, test5, test6, test7, test8, class_instance_fail_test, test9]
     let numtests = sum testscount
 
     putStrLn "-----------------------"

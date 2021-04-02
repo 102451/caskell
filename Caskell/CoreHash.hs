@@ -133,7 +133,7 @@ hash_type_tything (TyCoRep.ATyCon tc) = do
     dprintln ""
     return $ Just ret
 
-hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- TODO: newtype
+hash_type_tything (TyCoRep.ACoAxiom _) = return Nothing -- newtype
 hash_type_tything (TyCoRep.AnId _) = return Nothing -- not a type
 hash_type_tything (TyCoRep.AConLike _) = return Nothing -- data constructor, we want TYPES
 
@@ -272,22 +272,21 @@ hash_tyDepGraph_recTy graph rec = do
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#FunTyCon
 hash_funTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_funTyCon tc = do
-    let n = TyCon.tyConName tc
-
-    dprintln $ short_name n
-    -- TODO: implement
-    error "FunTyCon"
+    let tib = toBytes $ typeID tc
+    return $ get_hash tib
 
 -- https://hackage.haskell.org/package/ghc-8.10.2/docs/src/TyCon.html#AlgTyCon
 hash_algTyCon :: TyCon.TyCon -> CtxMonad (Hash)
 hash_algTyCon tc = do
-    -- TODO: stupid theta (the things on the left side, e.g. data Eq a => T a
     let rhs = TyCon.algTyConRhs tc
     let rhsid = typeID rhs
 
     mdep_add_tyCon tc
 
     let graph = dep_graph_from_tyCon tc
+
+    theta_hs <- mapM (hash_type) $ TyCon.tyConStupidTheta tc
+    let theta_bts = map toBytes theta_hs
 
     extra_bts <- case rhs of
       TyCon.TupleTyCon _ sort -> return $ toBytes sort
@@ -298,7 +297,7 @@ hash_algTyCon tc = do
 
     graph_hash <- hash_tyDepGraph graph
 
-    let bts = toBytes rhsid ++ toBytes graph_hash ++ extra_bts
+    let bts = concat $ [toBytes rhsid, toBytes graph_hash] ++ theta_bts ++ [extra_bts]
     return $ get_hash bts
 
 -- this hashes a data con by its arguments, not including the resulting type.
