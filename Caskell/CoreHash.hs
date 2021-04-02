@@ -60,7 +60,8 @@ null_hash = error "null hash"
 placeholder_hash = get_hash ([]::[Int])
 
 name_filter :: String -> Bool
-name_filter a = any (flip (isSuffixOf) a) ["$main", "$trModule", "$dIP"]
+--name_filter a = any (flip (isSuffixOf) a) ["$main", "$trModule", "$dIP"]
+name_filter = const False
 
 type CoreExpr = CoreSyn.Expr CoreSyn.CoreBndr
 
@@ -286,7 +287,7 @@ hash_algTyCon tc = do
     let graph = dep_graph_from_tyCon tc
 
     theta_hs <- mapM (hash_type) $ TyCon.tyConStupidTheta tc
-    let theta_bts = map toBytes theta_hs
+    let theta_bts = map toBytes $ sort theta_hs
 
     extra_bts <- case rhs of
       TyCon.TupleTyCon _ sort -> return $ toBytes sort
@@ -545,7 +546,6 @@ hash_corebind' vars (CoreSyn.Rec l) scope = do
     mapM_ (hash_func) l
 
     return $ get_hash recbytes
-
 
 hash_corebind :: CoreSyn.CoreBind -> ExprScope -> CtxMonad (Hash)
 hash_corebind = hash_corebind' emptyCtxVars
