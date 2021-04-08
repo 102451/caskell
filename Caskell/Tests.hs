@@ -196,16 +196,16 @@ test testfile = do
     putStrLn $ "\npassed " ++ show i ++ " tests"
     return i
 
-test1 = test "tests/test1.hs"
-test2 = test "tests/test2.hs"
-test3 = test "tests/test3.hs"
-test4 = test "tests/test4.hs"
-test5 = test "tests/test5.hs"
-test6 = test "tests/test6.hs"
-test7 = test "tests/test7.hs"
-test8 = test "tests/test8.hs"
-test9 = test "tests/test9.hs"
-test10 = test "tests/test10.hs"
+test1 = test "tests/1_literals_and_references.hs"
+test2 = test "tests/2_literals.hs"
+test3 = test "tests/3_data_types.hs"
+test4 = test "tests/4_recursive_data_types.hs"
+test5 = test "tests/5_typeclasses.hs"
+test6 = test "tests/6_function_definitions.hs"
+test7 = test "tests/7_recursive_function_definitions.hs"
+test8 = test "tests/8_class_instance_and_coercions.hs"
+test9 = test "tests/9_newtypes.hs"
+test10 = test "tests/10_typeclass_constraints.hs"
     
 class_instance_fail_test :: IO (Int)
 class_instance_fail_test = test "tests/class_instance_fail.hs"
